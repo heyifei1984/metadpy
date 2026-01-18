@@ -588,7 +588,13 @@ def preprocess_group(
     zscore_covariates: bool = False,
     drop_na: bool = False,
 ) -> Tuple[Dict, np.ndarray]:
-    """Preprocess group data for RHMeta-d regression (nodp)."""
+    """Preprocess group data for RHMeta-d regression (nodp).
+
+    Notes
+    -----
+    If ``X`` is square (``n_subj`` x ``n_subj``), it is treated as
+    ``(subjects x covariates)`` and is not transposed.
+    """
 
     if covariates is not None and X is not None:
         raise ValueError("Provide covariates or X, not both.")

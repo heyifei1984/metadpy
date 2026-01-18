@@ -153,6 +153,9 @@ class Testsdt(TestCase):
             data=None, nR_S1=nR_S1, nR_S2=nR_S2, nRatings=4, X=X_square
         )
         assert np.array_equal(X_out_square, X_square)
+        doc = preprocess_group.__doc__ or ""
+        assert "square" in doc.lower()
+        assert "not transposed" in doc.lower()
 
 
 if __name__ == "__main__":
