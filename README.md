@@ -56,6 +56,8 @@ For an extensive introduction to metadpy, you can navigate the following noteboo
 | Subject and group level (MLE) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/embodied-computation-group/metadpy/blob/master/docs/source/examples/Example%201%20-%20Fitting%20MLE%20-%20Subject%20and%20group%20level.ipynb)
 | Subject and group level (Bayesian) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/embodied-computation-group/metadpy/blob/master/docs/source/examples/Example%202%20-%20Fitting%20Bayesian%20-%20Subject%20level%20(pymc).ipynb)
 
+RHMetaD regression tutorial notebook: `notebooks/rhmetad_tutorial.ipynb`
+
 Or just follow the quick tour below.
 
 # Importing data
