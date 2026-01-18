@@ -318,6 +318,148 @@ def hmetad(
         return model_output, None
 
 
+@pf.register_dataframe_method
+def rhmetad(
+    data=None,
+    nR_S1=None,
+    nR_S2=None,
+    stimuli="Stimuli",
+    accuracy="Accuracy",
+    confidence="Confidence",
+    nRatings=None,
+    subject=None,
+    covariates=None,
+    X=None,
+    nbins=4,
+    padding=False,
+    padAmount=None,
+    zscore_covariates=False,
+    drop_na=False,
+    backend: str = "pymc",
+    sample_model=True,
+    num_samples: int = 1000,
+    num_chains: int = 4,
+    compile_mode: Optional[str] = None,
+    compile_kwargs: Optional[Dict] = None,
+    **kwargs,
+):
+    """Bayesian RHMeta-d regression model (group level, nodp).
+
+    Parameters
+    ----------
+    data :
+        Dataframe. Note that this function can also directly be used as a Pandas
+        method, in which case this argument is no longer needed.
+    nR_S1 :
+        Confience ratings (stimuli 1, correct and incorrect).
+    nR_S2 :
+        Confience ratings (stimuli 2, correct and incorrect).
+    stimuli :
+        Name of the column containing the stimuli.
+    accuracy :
+        Name of the columns containing the accuracy.
+    confidence :
+        Name of the column containing the confidence ratings.
+    nRatings :
+        Number of discrete ratings. If a continuous rating scale was used, and
+        the number of unique ratings does not match `nRatings`, will convert to
+        discrete ratings using :py:func:`metadpy.utils.discreteRatings`.
+    subject :
+        Name of column containing the subject identifier.
+    covariates :
+        Column name or list of columns containing subject-level covariates.
+    X :
+        Covariate matrix shaped (subjects x covariates).
+    nbins :
+        Number of discrete ratings when converting continuous confidence to
+        discrete ratings.
+    padding :
+        If `True`, each response count in the output has the value of padAmount
+        added to it.
+    padAmount :
+        The value to add to each response count if padding is set to 1.
+    zscore_covariates :
+        If `True`, z-score covariates across subjects.
+    drop_na :
+        If `True`, drop subjects with non-finite covariates.
+    backend :
+        Backend to use, either `"pymc"` or `"numpyro"`.
+    sample_model :
+        If `False`, only the model is returned without sampling.
+    num_samples :
+        The number of samples per chains to draw (defaults to `1000`).
+    num_chains :
+        The number of chains (defaults to `4`).
+    compile_mode :
+        Optional PyTensor compile mode (e.g. `"MLX"` for Apple Silicon).
+    compile_kwargs :
+        Full `compile_kwargs` dict passed to `pm.sample`.
+    **kwargs : keyword arguments
+        All keyword arguments are passed to `func::pymc.sampling.sample`.
+
+    Returns
+    -------
+    model :
+        The model PyMC as a :py:class:`pymc.Model`.
+    traces :
+        A `MultiTrace` or `ArviZ InferenceData` object that contains the samples. Only
+        returned if `sample_model` is set to `True`, otherwise set to None.
+
+    """
+    if backend not in ["pymc", "numpyro"]:
+        raise ValueError("Invalid backend provided - should be 'pymc' or 'numpyro'.")
+    if backend != "pymc":
+        raise ValueError("The numpyro backend is not implemented yet.")
+
+    if compile_kwargs is not None and compile_mode is not None:
+        raise ValueError("Provide compile_mode or compile_kwargs, not both.")
+    if compile_kwargs is None and compile_mode is not None:
+        compile_kwargs = {"mode": compile_mode}
+
+    if "compile_kwargs" in kwargs:
+        raise ValueError("compile_kwargs should be passed as a named argument.")
+
+    modelScript = os.path.dirname(__file__) + "/models/"
+    sys.path.append(modelScript)
+
+    pymc_data, X = preprocess_group(
+        data=data,
+        nR_S1=nR_S1,
+        nR_S2=nR_S2,
+        stimuli=stimuli,
+        accuracy=accuracy,
+        confidence=confidence,
+        nRatings=nRatings,
+        subject=subject,
+        covariates=covariates,
+        X=X,
+        nbins=nbins,
+        padding=padding,
+        padAmount=padAmount,
+        zscore_covariates=zscore_covariates,
+        drop_na=drop_na,
+    )
+
+    from group_level_regression_pymc import rhmetad_groupLevel
+
+    if compile_kwargs is not None:
+        kwargs = {**kwargs, "compile_kwargs": compile_kwargs}
+
+    model_output = rhmetad_groupLevel(
+        pymc_data,
+        X,
+        sample_model=sample_model,
+        num_chains=num_chains,
+        num_samples=num_samples,
+        **kwargs,
+    )
+
+    if sample_model is True:
+        return model_output
+
+    return model_output, None
+
+
 def extractParameters(
     nR_S1: Union[List[int], np.ndarray], nR_S2: Union[List[int], np.ndarray]
 ) -> Dict:
@@ -409,90 +551,217 @@ def extractParameters(
     return data
 
 
-# TODO: when implementing group level fitting, the following wrapper will be usefull.
-# def preprocess_group(
-#     data: pd.DataFrame,
-#     subject: str,
-#     stimuli: str,
-#     accuracy: str,
-#     confidence: str,
-#     nRatings: int,
-# ) -> Dict:
-#     """Preprocess group data.
+def preprocess_group(
+    data: Optional[pd.DataFrame],
+    nR_S1: Optional[Union[List, np.ndarray]] = None,
+    nR_S2: Optional[Union[List, np.ndarray]] = None,
+    subject: Optional[str] = None,
+    stimuli: str = "Stimuli",
+    accuracy: str = "Accuracy",
+    confidence: str = "Confidence",
+    nRatings: Optional[int] = None,
+    covariates: Optional[Union[str, List[str]]] = None,
+    X: Optional[Union[np.ndarray, pd.DataFrame]] = None,
+    nbins: int = 4,
+    padding: bool = False,
+    padAmount: Optional[float] = None,
+    zscore_covariates: bool = False,
+    drop_na: bool = False,
+) -> Tuple[Dict, np.ndarray]:
+    """Preprocess group data for RHMeta-d regression (nodp)."""
 
-#     Parameters
-#     ----------
-#     data : :py:class:`pandas.DataFrame` or None
-#         Dataframe. Note that this function can also directly be used as a
-#         Pandas method, in which case this argument is no longer needed.
-#     subject : string or None
-#         Name of column containing the subject identifier (only required if a
-#         within-subject or a between-subject factor is provided).
-#     stimuli : string or None
-#         Name of the column containing the stimuli.
-#     accuracy : string or None
-#         Name of the columns containing the accuracy.
-#     confidence : string or None
-#         Name of the column containing the confidence ratings.
-#     nRatings : int or None
-#         Number of discrete ratings. If a continuous rating scale was used, and
-#         the number of unique ratings does not match `nRatings`, will convert to
-#         discrete ratings using :py:func:`metadpy.utils.discreteRatings`.
+    if covariates is not None and X is not None:
+        raise ValueError("Provide covariates or X, not both.")
 
-#     Return
-#     ------
-#     pymcData : Dict
+    if data is None:
+        if (X is None) and (covariates is None):
+            raise ValueError("You should provide covariates or X.")
+        if (nR_S1 is None) or (nR_S2 is None):
+            raise ValueError(
+                "If data is None, you should provide the nR_S1 and nR_S2 arrays instead."
+            )
+        nR_S1, nR_S2, nRatings = _coerce_group_counts(nR_S1, nR_S2, nRatings)
+        subjects = np.arange(nR_S1.shape[0])
+    else:
+        if subject is None:
+            raise ValueError("You should provide the subject column name.")
+        if nRatings is None:
+            raise ValueError("You should provide the number of ratings.")
+        nRatings = _validate_nratings(nRatings)
 
-#     """
-#     pymcData = {
-#         "d1": [],
-#         "c1": [],
-#         "nSubj": data[subject].nunique(),
-#         "subID": np.arange(data[subject].nunique(), dtype="int"),
-#         "hits": [],
-#         "falsealarms": [],
-#         "s": [],
-#         "n": [],
-#         "counts": [],
-#         "nRatings": nRatings,
-#         "Tol": 1e-05,
-#         "cr": [],
-#         "m": [],
-#     }
+        if data[confidence].nunique() > nRatings:
+            print(
+                (
+                    "The confidence columns contains more unique values than nRatings. "
+                    "The ratings are going to be discretized using "
+                    "metadpy.utils.discreteRatings()"
+                )
+            )
+            new_ratings, _ = discreteRatings(data[confidence].to_numpy(), nbins=nbins)
+            data = data.copy()
+            data.loc[:, confidence] = new_ratings
 
-#     for sub in data[subject].unique():
-#         nR_S1, nR_S2 = trials2counts(
-#             data=data[data[subject] == sub],
-#             stimuli=stimuli,
-#             accuracy=accuracy,
-#             confidence=confidence,
-#             nRatings=nRatings,
-#         )
+        subjects = pd.unique(data[subject])
+        nR_S1_list = []
+        nR_S2_list = []
+        for sub in subjects:
+            nR_S1_sub, nR_S2_sub = trials2counts(
+                data=data[data[subject] == sub],
+                stimuli=stimuli,
+                accuracy=accuracy,
+                confidence=confidence,
+                nRatings=nRatings,
+                padding=padding,
+                padAmount=padAmount,
+            )
+            nR_S1_list.append(nR_S1_sub)
+            nR_S2_list.append(nR_S2_sub)
+        nR_S1 = np.asarray(nR_S1_list)
+        nR_S2 = np.asarray(nR_S2_list)
 
-#         this_data = extractParameters(nR_S1, nR_S2)
-#         pymcData["d1"].append(this_data["d1"])
-#         pymcData["c1"].append(this_data["c1"])
-#         pymcData["s"].append(this_data["S"])
-#         pymcData["n"].append(this_data["N"])
-#         pymcData["m"].append(this_data["M"])
-#         pymcData["cr"].append(this_data["CR"])
-#         pymcData["counts"].append(this_data["counts"])
-#         pymcData["hits"].append(this_data["H"])
-#         pymcData["falsealarms"].append(this_data["FA"])
+    n_subj = nR_S1.shape[0]
+    d1 = np.zeros(n_subj, dtype=float)
+    c1 = np.zeros(n_subj, dtype=float)
+    counts = np.zeros((n_subj, 4 * nRatings), dtype=float)
 
-#     pymcData["d1"] = np.array(pymcData["d1"], dtype="float")
-#     pymcData["c1"] = np.array(pymcData["c1"], dtype="float")
-#     pymcData["s"] = np.array(pymcData["s"], dtype="int")
-#     pymcData["n"] = np.array(pymcData["n"], dtype="int")
-#     pymcData["m"] = np.array(pymcData["m"], dtype="int")
-#     pymcData["cr"] = np.array(pymcData["cr"], dtype="int")
-#     pymcData["counts"] = np.array(pymcData["counts"], dtype="int")
-#     pymcData["hits"] = np.array(pymcData["hits"], dtype="int")
-#     pymcData["falsealarms"] = np.array(pymcData["falsealarms"], dtype="int")
-#     pymcData["nSubj"] = data[subject].nunique()
-#     pymcData["subID"] = np.arange(pymcData["nSubj"], dtype="int")
+    for idx in range(n_subj):
+        this_data = extractParameters(nR_S1[idx], nR_S2[idx])
+        d1[idx] = this_data["d1"]
+        c1[idx] = this_data["c1"]
+        counts[idx] = this_data["counts"]
 
-#     return pymcData
+    CR_counts = counts[:, :nRatings]
+    FA_counts = counts[:, nRatings : 2 * nRatings]
+    M_counts = counts[:, 2 * nRatings : 3 * nRatings]
+    H_counts = counts[:, 3 * nRatings : 4 * nRatings]
+    CR = CR_counts.sum(axis=1)
+    FA = FA_counts.sum(axis=1)
+    M = M_counts.sum(axis=1)
+    H = H_counts.sum(axis=1)
+
+    if covariates is not None:
+        if data is None:
+            raise ValueError("Covariates require a dataframe input.")
+        covariate_cols = [covariates] if isinstance(covariates, str) else list(covariates)
+        if len(covariate_cols) == 0:
+            raise ValueError("Covariates must include at least one column.")
+        missing = [col for col in covariate_cols if col not in data.columns]
+        if missing:
+            raise ValueError(f"Covariate columns not found: {missing}.")
+        grouped = data.groupby(subject, sort=False)[covariate_cols]
+        if (grouped.nunique(dropna=False) > 1).any().any():
+            raise ValueError("Covariates must be constant within subject.")
+        cov_df = grouped.first().reindex(subjects)
+        X = cov_df.to_numpy()
+    elif X is not None:
+        if isinstance(X, pd.DataFrame):
+            X = X.to_numpy()
+        else:
+            X = np.asarray(X)
+    else:
+        raise ValueError("You should provide covariates or X.")
+
+    if X.ndim == 1:
+        X = X[:, None]
+    if X.ndim != 2:
+        raise ValueError("Covariate matrix must be 2D (subjects x covariates).")
+    if X.shape[0] == n_subj:
+        pass
+    elif X.shape[1] == n_subj:
+        X = X.T
+    else:
+        raise ValueError(
+            "Covariate matrix must have shape (n_subj, P) or (P, n_subj) "
+            f"with n_subj={n_subj}. Got {X.shape}."
+        )
+
+    finite_mask = np.isfinite(X).all(axis=1)
+    if not finite_mask.all():
+        if drop_na is True:
+            X = X[finite_mask]
+            d1 = d1[finite_mask]
+            c1 = c1[finite_mask]
+            counts = counts[finite_mask]
+            CR_counts = CR_counts[finite_mask]
+            FA_counts = FA_counts[finite_mask]
+            M_counts = M_counts[finite_mask]
+            H_counts = H_counts[finite_mask]
+            CR = CR[finite_mask]
+            FA = FA[finite_mask]
+            M = M[finite_mask]
+            H = H[finite_mask]
+            subjects = subjects[finite_mask]
+            n_subj = X.shape[0]
+            if n_subj == 0:
+                raise ValueError("All subjects were dropped due to non-finite covariates.")
+        else:
+            raise ValueError("Covariates contain non-finite values.")
+
+    if zscore_covariates is True:
+        means = X.mean(axis=0)
+        stds = X.std(axis=0, ddof=0)
+        if np.any(stds == 0):
+            raise ValueError("Cannot z-score covariates with zero variance.")
+        X = (X - means) / stds
+
+    pymc_data = {
+        "d1": d1,
+        "c1": c1,
+        "counts": counts,
+        "CR_counts": CR_counts,
+        "FA_counts": FA_counts,
+        "M_counts": M_counts,
+        "H_counts": H_counts,
+        "CR": CR,
+        "FA": FA,
+        "M": M,
+        "H": H,
+        "nRatings": nRatings,
+        "nSubj": n_subj,
+        "Tol": 1e-05,
+        "subjects": subjects,
+    }
+
+    return pymc_data, X
+
+
+def _validate_nratings(nRatings: Optional[int]) -> int:
+    if nRatings is None:
+        raise ValueError("You should provide the number of ratings.")
+    try:
+        nRatings_int = int(nRatings)
+    except (TypeError, ValueError):
+        raise ValueError("nRatings should be a positive integer.")
+    if nRatings_int < 2 or nRatings_int != nRatings:
+        raise ValueError("nRatings should be a positive integer.")
+    return nRatings_int
+
+
+def _coerce_group_counts(nR_S1, nR_S2, nRatings):
+    if (nR_S1 is None) or (nR_S2 is None):
+        raise ValueError(
+            "If data is None, you should provide the nR_S1 and nR_S2 arrays instead."
+        )
+    nR_S1 = np.asarray(nR_S1)
+    nR_S2 = np.asarray(nR_S2)
+    if nR_S1.shape != nR_S2.shape:
+        raise ValueError("nR_S1 and nR_S2 must have the same shape.")
+    if nR_S1.ndim == 1:
+        nR_S1 = nR_S1[None, :]
+        nR_S2 = nR_S2[None, :]
+    if nR_S1.ndim != 2:
+        raise ValueError("nR_S1 and nR_S2 must be 1D or 2D arrays.")
+    if nRatings is None:
+        if nR_S1.shape[1] % 2 != 0:
+            raise ValueError("nR_S1 and nR_S2 must have length 2 * nRatings.")
+        nRatings = nR_S1.shape[1] // 2
+    else:
+        nRatings = _validate_nratings(nRatings)
+        if nR_S1.shape[1] != 2 * nRatings:
+            raise ValueError("nR_S1 and nR_S2 must have length 2 * nRatings.")
+    if np.any(nR_S1 < 0) or np.any(nR_S2 < 0):
+        raise ValueError("nR_S1 and nR_S2 must be non-negative.")
+    return nR_S1, nR_S2, nRatings
 
 
 # def preprocess_rm1way(

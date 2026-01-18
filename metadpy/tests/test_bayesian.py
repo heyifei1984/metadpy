@@ -8,7 +8,7 @@ import pymc as pm
 import pytest
 
 from metadpy import load_dataset
-from metadpy.bayesian import extractParameters, hmetad
+from metadpy.bayesian import extractParameters, hmetad, preprocess_group
 from metadpy.utils import ratings2df
 
 
@@ -120,6 +120,39 @@ class Testsdt(TestCase):
         assert round(pymc_df["c"].values[0], 2) - 0.0 < 0.01
         assert round(pymc_df["meta_d"].values[0], 2) - 1.58 < 0.01
         assert round(pymc_df["m_ratio"].values[0], 2) - 1.03 < 0.01
+
+    def test_preprocess_group_covariate_layouts(self):
+        nR_S1 = np.array(
+            [
+                [10, 9, 8, 7, 6, 5, 4, 3],
+                [11, 10, 9, 8, 7, 6, 5, 4],
+                [12, 11, 10, 9, 8, 7, 6, 5],
+            ]
+        )
+        nR_S2 = np.array(
+            [
+                [3, 4, 5, 6, 7, 8, 9, 10],
+                [4, 5, 6, 7, 8, 9, 10, 11],
+                [5, 6, 7, 8, 9, 10, 11, 12],
+            ]
+        )
+        X_sp = np.array([[0.1, 1.2], [0.2, 1.3], [0.3, 1.4]])
+        _, X_out = preprocess_group(
+            data=None, nR_S1=nR_S1, nR_S2=nR_S2, nRatings=4, X=X_sp
+        )
+        assert np.array_equal(X_out, X_sp)
+
+        X_ps = X_sp.T
+        _, X_out_ps = preprocess_group(
+            data=None, nR_S1=nR_S1, nR_S2=nR_S2, nRatings=4, X=X_ps
+        )
+        assert np.array_equal(X_out_ps, X_sp)
+
+        X_square = np.eye(nR_S1.shape[0])
+        _, X_out_square = preprocess_group(
+            data=None, nR_S1=nR_S1, nR_S2=nR_S2, nRatings=4, X=X_square
+        )
+        assert np.array_equal(X_out_square, X_square)
 
 
 if __name__ == "__main__":
