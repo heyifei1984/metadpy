@@ -1,3 +1,75 @@
+# AGENTS.md
+
+## Mission (what you are building)
+This repository will add a hierarchical Bayesian *regression* extension for metacognitive efficiency (meta-d'/d' a.k.a. Mratio) to the existing meta-d'/HMeta-d-style modeling code.
+
+Primary deliverable:
+- A new public function implementing RHMeta-d-style regression on subject-level metacognitive efficiency (typically modeled on log(Mratio)), with MCMC sampling via the repo’s existing Bayesian backend.
+
+## Non-goals (do NOT do these unless explicitly instructed)
+- Do not rewrite existing meta-d' or hmeta-d implementations.
+- Do not change existing public APIs unless the project plan explicitly calls for it.
+- Do not introduce new probabilistic-programming frameworks (stick to what the repo already uses).
+- Do not add heavy new dependencies without a written justification and approval.
+
+## Required reading before coding
+1) Read `PROJECT_PLAN.md` (milestones + acceptance criteria).
+2) If present, read `docs/model_spec_rhmetad.md` (math + priors + outputs).
+3) Read the existing Bayesian model implementation in this repo (e.g., the current `hmetad` function and utilities).
+
+If `docs/model_spec_rhmetad.md` does not exist yet, create it as the first PR (see PROJECT_PLAN).
+
+## Working style (how to operate)
+- Start every task by producing a short plan with:
+  - Files you will touch
+  - Tests you will add/update
+  - How you will validate correctness (simulation/recovery)
+- Work in small, reviewable commits and PR-sized chunks.
+- Prefer minimal diffs over large refactors.
+
+## Scientific correctness rules (hard constraints)
+- Any modeling choice that affects inference must be documented in `docs/model_spec_rhmetad.md`.
+- If you cannot verify a detail from a reliable source (paper, official toolbox, or existing repo code), label it clearly as **UNVERIFIED** in the spec and open a tracking issue.
+- Add simulation-based tests:
+  - Parameter recovery for regression coefficients
+  - Posterior predictive sanity checks (at least one)
+- Ensure covariates align correctly to subject IDs (no silent re-ordering).
+
+## Repo hygiene and safety
+- Do not run destructive shell commands.
+- Do not modify files outside the repo workspace.
+- Do not fetch random external scripts.
+- Prefer deterministic commands and pinned dependencies where possible.
+
+## Lint / format / tests
+Use the repo’s existing tooling. If unsure:
+- Find and follow existing CI workflows and dev instructions in README.
+- Run the full test suite before finishing a PR.
+- Run formatting/lint steps that the repo expects (e.g., pre-commit, ruff/black, etc.), if configured.
+
+## Review guidelines (used for @codex review)
+When reviewing changes, prioritize:
+1) Statistical/model correctness (likelihood, priors, parameterization)
+2) Tests (especially recovery tests)
+3) API stability and clear docstrings
+4) Performance only after correctness is established
+
+Treat the following as P0 issues:
+- Incorrect mapping between trials → counts → likelihood
+- Wrong handling of confidence rating bins
+- Covariate misalignment to subjects
+- Regression implemented “post-hoc” instead of inside the hierarchical model (unless explicitly intended)
+
+## PR checklist (must pass)
+- [ ] New/updated tests added and passing
+- [ ] Model spec updated (or created)
+- [ ] Clear docstring + example usage added for new public API
+- [ ] No unnecessary refactors
+- [ ] Outputs include regression posteriors and Mratio/logMratio posteriors
+
+
+
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization
