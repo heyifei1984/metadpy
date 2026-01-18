@@ -1,258 +1,255 @@
-# RHMetaD.md — MATLAB/JAGS parity spec for RHMeta-d regression (metadpy fork)
+# RHMetaD.md
 
-This document is a **precise implementation contract** for adding the HMeta-d hierarchical regression model to metadpy.
+## What this document is
+This is the **model specification** for implementing **RHMetaD** (Regression HMeta-d) in Python, intended to mirror the MATLAB **HMeta-d regression (nodp)** implementation.
 
-The v1 target is parity with the MATLAB/JAGS regression path:
-- `Matlab/fit_meta_d_mcmc_regression.m`
-- `Matlab/Bayes_metad_group_regress_nodp*.txt`
+The goal is to implement a group-level hierarchical Bayesian regression of **log metacognitive efficiency**:
 
----
+- **Mratio** = meta-d′ / d′  
+- Regression is on **log(Mratio)** using continuous covariates (trait measures, etc.).
 
-## Sources (authoritative references)
+## Reference implementation (MATLAB)
+These are the canonical reference files in the MATLAB toolbox:
 
-Primary (official toolbox):
-- HMeta-d GitHub repo (official): metacoglab/HMeta-d
+```text
+HMeta-d/Matlab/fit_meta_d_mcmc_regression.m
+HMeta-d/Matlab/Bayes_metad_group_regress_nodp.txt
+HMeta-d/Matlab/Bayes_metad_group_regress_nodp_2cov.txt
+...
+HMeta-d/Matlab/Bayes_metad_group_regress_nodp_5cov.txt
+HMeta-d/Matlab/trials2counts.m
+```
 
-Primary (paper):
-- Fleming, S. M. (2017). *HMeta-d: hierarchical Bayesian estimation of metacognitive efficiency from confidence ratings.* Neuroscience of Consciousness.
-
-Apple Silicon / JAX Metal:
-- Apple Developer: “Accelerated JAX on Mac — Metal plug-in”
-- PyMC docs: `pymc.sampling.jax.sample_numpyro_nuts`
-- PyMC issue tracker: Apple Silicon Metal sampling is experimental (may fail)
-
-(Keep URLs in this file if you want; do not rely on memory.)
-
----
-
-## 0) Glossary and shapes
-
-Let:
-- `S` = number of subjects
-- `K` = number of confidence ratings per response (e.g., K=3 means 3 confidence levels)
-- Each subject has `2*K` response categories per stimulus (S1 or S2 stimulus)
-
-Data:
-- `nR_S1[s, :]` shape `(S, 2*K)` (or list length S of vectors length 2*K)
-- `nR_S2[s, :]` shape `(S, 2*K)`
-- `cov` / `X` subject covariates:
-  - MATLAB expects `cov` shape `(P, S)` (P covariates × S subjects)
-  - Python API may accept `(S, P)` but MUST align to subjects deterministically.
+If you need direct links, the upstream toolbox is hosted on GitHub (repo name: `HMeta-d`).  
+(Links are provided in a code block at the end of this document.)
 
 ---
 
-## 1) Exact response-count ordering (must match HMeta-d)
+## 1) Data and ordering conventions
 
-Per subject, `nR_S1` and `nR_S2` encode counts conditional on stimulus class (S1 vs S2).
+### 1.1 Counts vectors per subject
+For a subject with **K = nRatings** discrete confidence levels:
 
-Ordering (from MATLAB docs and `trials2counts.m`):
-- First K entries: responded “S1”, confidence from **high → low**
-- Last K entries: responded “S2”, confidence from **low → high**
+- `nR_S1` is a length `2K` vector: counts when **stimulus S1** was presented.
+- `nR_S2` is a length `2K` vector: counts when **stimulus S2** was presented.
 
-Example for K=3:
-- index 1: responded S1, rating=3 (high)
-- index 2: responded S1, rating=2
-- index 3: responded S1, rating=1 (low)
-- index 4: responded S2, rating=1 (low)
-- index 5: responded S2, rating=2
-- index 6: responded S2, rating=3 (high)
+Ordering (matches MATLAB `trials2counts.m`):
+- First **K** entries: responded “S1”, with confidence from **high → low** (K, K-1, …, 1).
+- Last **K** entries: responded “S2”, with confidence from **low → high** (1, 2, …, K).
 
-Construction from trial-level (MATLAB `trials2counts.m`):
-- For S1-responses: loop rating r = K..1
-- For S2-responses: loop rating r = 1..K
+So for K=3, `nR_S1 = [S1@3, S1@2, S1@1, S2@1, S2@2, S2@3]`.
 
----
+### 1.2 Combined counts table
+Define the concatenated vector:
 
-## 2) “nodp” preprocessing for type-1 parameters (d′ and criterion)
+- `counts = [nR_S1, nR_S2]` which has length `4K`.
 
-In v1 regression parity, the model uses **fixed** `d1[s]` and `c1[s]` computed from the rating counts, matching MATLAB (`fit_meta_d_mcmc_regression.m` and `fit_meta_d_mcmc_group.m`):
+From `counts`, define the four type-2 subsets (each length K):
+- `CR_counts = counts[0:K]`
+- `FA_counts = counts[K:2K]`
+- `M_counts  = counts[2K:3K]`
+- `H_counts  = counts[3K:4K]`
 
-Given subject counts `nR_S1` and `nR_S2` (length 2*K):
-1) Add a small adjustment ONLY for computing the point estimate:
-   - `adj_f = 1 / (2*K)`
-   - `nR_S1_adj = nR_S1 + adj_f`
-   - `nR_S2_adj = nR_S2 + adj_f`
-
-2) Build cumulative HR and FAR over criteria c = 2..(2*K):
-   - `ratingHR[c-1]  = sum(nR_S2_adj[c:]) / sum(nR_S2_adj)`
-   - `ratingFAR[c-1] = sum(nR_S1_adj[c:]) / sum(nR_S1_adj)`
-
-3) Use the criterion at `t1_index = K` (i.e., the boundary between S1 and S2 responses):
-   - `d1[s] = Φ^{-1}(ratingHR[K]) - Φ^{-1}(ratingFAR[K])`
-   - `c1[s] = -0.5 * ( Φ^{-1}(ratingHR[K]) + Φ^{-1}(ratingFAR[K]) )`
-
-Where Φ^{-1} is the standard normal inverse CDF.
-
-Important:
-- The padded counts are ONLY for the point estimate.
-- The Bayesian likelihood uses the original counts.
+And their totals:
+- `CR = sum(CR_counts)`
+- `FA = sum(FA_counts)`
+- `M  = sum(M_counts)`
+- `H  = sum(H_counts)`
 
 ---
 
-## 3) Count matrix used by the JAGS model
+## 2) Preprocessing: fixed type-1 d′ and criterion (nodp)
 
-JAGS regression model uses a `counts` matrix per subject created as:
-- `counts[s, :] = [nR_S1[s, :] , nR_S2[s, :]]`
+MATLAB regression uses the **nodp** approach:
+- compute type-1 `d1` and `c1` from the (padded) rating data,
+- then treat them as **fixed** data in the hierarchical model.
 
-So `counts[s, :]` has length `4*K`.
+### 2.1 Padding for stable type-1 estimates
+Let `K = nRatings`.
 
-Define totals per subject:
-- `CR[s] = sum(counts[s, 1:K])`                      (S1 stim, responded S1)
-- `FA[s] = sum(counts[s, K+1:2K])`                   (S1 stim, responded S2)
-- `M[s]  = sum(counts[s, 2K+1:3K])`                  (S2 stim, responded S1)
-- `H[s]  = sum(counts[s, 3K+1:4K])`                  (S2 stim, responded S2)
+Define:
+- `adj_f = 1 / (2K)`
+- `nR_S1_adj = nR_S1 + adj_f`
+- `nR_S2_adj = nR_S2 + adj_f`
 
-The likelihood is four multinomials:
-- `counts_CR ~ Multinomial(CR, p_CR)`
-- `counts_FA ~ Multinomial(FA, p_FA)`
-- `counts_M  ~ Multinomial(M,  p_M)`
-- `counts_H  ~ Multinomial(H,  p_H)`
+### 2.2 Rating-wise HR and FAR
+For each criterion index `c` from `2` to `2K` (MATLAB loop corresponds to python slice indices):
+
+- `ratingHR[c-1]  = sum(nR_S2_adj[c:]) / sum(nR_S2_adj)`
+- `ratingFAR[c-1] = sum(nR_S1_adj[c:]) / sum(nR_S1_adj)`
+
+Type-1 decision boundary index is:
+- `t1_index = K`  (the boundary between “respond S1” vs “respond S2”)
+
+So:
+- `HR = ratingHR[t1_index]`
+- `FAR = ratingFAR[t1_index]`
+
+### 2.3 Type-1 d′ and criterion
+Let `z(p) = Φ^{-1}(p)` where Φ is the standard normal CDF.
+
+- `d1 = z(HR) - z(FAR)`
+- `c1 = -0.5 * ( z(HR) + z(FAR) )`
+
+These `d1` and `c1` are treated as **known constants** for each subject s.
 
 ---
 
-## 4) Core equal-variance SDT meta-d′ construction
+## 3) Model: regression on log(Mratio)
 
-### 4.1 Mratio and meta-d′ coupling
+Let there be S subjects and P covariates.
+
+### 3.1 Covariates
+- MATLAB expects `cov` shaped `(P, S)` (covariates × subjects).
+- In Python, prefer `X` shaped `(S, P)` but accept `(P, S)` and transpose.
+
+### 3.2 Priors / hyperpriors (match MATLAB regression scripts)
+Priors are written here in standard notation; MATLAB/JAGS uses precisions.
+
+**Criteria hyperpriors**
+- `mu_c2 ~ Normal(0, 10)`  (JAGS: `dnorm(0, 0.01)`)
+- `sigma_c2 ~ HalfNormal(10)` (JAGS: `dnorm(0,0.01) I(0,)`)
+
+**Regression / Mratio hyperpriors**
+- `mu_logMratio ~ Normal(0, 1)`
+- `beta[p] ~ Normal(0, 1)` independently for p=1..P
+
+**Robust subject deviation**
+- `sigma_delta ~ HalfNormal(1)`
+- `zeta = epsilon_logMratio ~ Beta(1, 1)` (Uniform(0,1))
+
 Per subject:
-- `logMratio[s] = log(meta_d′[s] / d1[s])`
+- `delta[s] ~ StudentT(nu=5, mu=0, sigma=sigma_delta)`
+- `logMratio[s] = mu_logMratio + X[s]·beta + zeta * delta[s]`
 - `Mratio[s] = exp(logMratio[s])`
-- `mu[s] = Mratio[s] * d1[s]`
-- `S2mu[s] =  mu[s] / 2`
-- `S1mu[s] = -mu[s] / 2`
 
-Equal variance SDT (sd=1 on both S1 and S2 distributions).
+A useful derived quantity (matches MATLAB output):
+- `sigma_logMratio = zeta * sigma_delta`  
+  (JAGS writes `abs(epsilon_logMratio)*sigma_delta`, but `zeta>=0`.)
 
-### 4.2 Normalization constants
-Using Φ as standard normal CDF:
-- `C_area_rS1[s] = Φ(c1[s] - S1mu[s])`
-- `I_area_rS1[s] = Φ(c1[s] - S2mu[s])`
-- `C_area_rS2[s] = 1 - Φ(c1[s] - S2mu[s])`
-- `I_area_rS2[s] = 1 - Φ(c1[s] - S1mu[s])`
+### 3.3 Meta-d′ from Mratio
+In nodp regression, type-1 `d1[s]` is fixed, and:
 
----
+- `meta_d[s] = Mratio[s] * d1[s]`
 
-## 5) Type-2 criteria and their priors (must match JAGS)
-
-For each subject s, there are `K-1` type-2 criteria on each response side:
-- `cS1[s, 1:(K-1)]`  (criteria for response = S1)
-- `cS2[s, 1:(K-1)]`  (criteria for response = S2)
-
-### 5.1 Priors (JAGS)
-Hyperpriors:
-- `mu_c2 ~ Normal(0, sd=10)`        (JAGS precision 0.01)
-- `sigma_c2 ~ HalfNormal(sd=10)`    (JAGS Normal(0,10) truncated >0)
-- `lambda_c2 = sigma_c2^{-2}`
-
-Subject criteria (raw, then ordered):
-- for j=1..(K-1):
-  - `cS1_raw[s,j] ~ Normal(-mu_c2, sd=sigma_c2) truncated (-inf, c1[s])`
-  - `cS2_raw[s,j] ~ Normal( mu_c2, sd=sigma_c2) truncated (c1[s], +inf)`
-- then enforce ordering:
-  - `cS1[s,:] = sort(cS1_raw[s,:])`
-  - `cS2[s,:] = sort(cS2_raw[s,:])`
-
-**PyMC implementation note:** sorting is not differentiable; implement ordering via an ordered transform (equivalent up to a constant factor in the prior density). Preserve the effective truncated support relative to `c1[s]`.
+Define SDT means for the type-2 evidence axis:
+- `S1mu[s] = -meta_d[s] / 2`
+- `S2mu[s] = +meta_d[s] / 2`
 
 ---
 
-## 6) Probability construction for the multinomials (JAGS equations)
+## 4) Type-2 criteria priors (as in MATLAB regression scripts)
 
-Let `Tol = 1e-5` (as in MATLAB datastruct).
+For each subject s and each rating boundary j = 1..(K-1):
 
-Define helper:
-- `Φ(x; μ) = Φ(x - μ)` where Φ is standard normal CDF and SD=1.
+- `cS1_raw[s,j] ~ Normal(-mu_c2, sigma_c2)` truncated to `(-∞, c1[s])`
+- `cS2_raw[s,j] ~ Normal(+mu_c2, sigma_c2)` truncated to `(c1[s], +∞)`
 
-### 6.1 Block 1: counts[s, 1:K] (CR block; S1 stim, responded S1)
+Then enforce ordering (MATLAB/JAGS does this by sorting):
+- `cS1[s,:] = sort(cS1_raw[s,:])`  (ascending)
+- `cS2[s,:] = sort(cS2_raw[s,:])`  (ascending)
+
+> Implementation note (PyMC): sorting is non-differentiable.  
+> A NUTS-friendly equivalent is to parameterize **positive increments** away from `c1[s]` to ensure ordering.  
+> As long as the resulting criteria satisfy the same constraints (monotone, on correct side of c1), the likelihood matches.
+
+---
+
+## 5) Likelihood: multinomials for CR / FA / M / H
+
+Define a small tolerance:
+- `Tol = 1e-5`
+
+Define normalization constants:
+- `C_area_rS1 = Φ(c1 - S1mu)`
+- `I_area_rS2 = 1 - Φ(c1 - S1mu)`
+- `I_area_rS1 = Φ(c1 - S2mu)`
+- `C_area_rS2 = 1 - Φ(c1 - S2mu)`
+
+### 5.1 CR probabilities (stimulus S1, responded S1; K bins)
+Let `cS1[j]` be the ordered criteria (`j=1..K-1`).
+
 - `p_CR[1] = Φ(cS1[1] - S1mu) / C_area_rS1`
-- for k=1..(K-2):
-  - `p_CR[k+1] = (Φ(cS1[k+1] - S1mu) - Φ(cS1[k] - S1mu)) / C_area_rS1`
-- `p_CR[K] = (Φ(c1 - S1mu) - Φ(cS1[K-1] - S1mu)) / C_area_rS1`
+- for k=1..K-2:  
+  `p_CR[k+1] = [Φ(cS1[k+1] - S1mu) - Φ(cS1[k] - S1mu)] / C_area_rS1`
+- `p_CR[K] = [Φ(c1 - S1mu) - Φ(cS1[K-1] - S1mu)] / C_area_rS1`
 
-### 6.2 Block 2: counts[s, K+1:2K] (FA block; S1 stim, responded S2)
-- `p_FA[1] = ((1-Φ(c1 - S1mu)) - (1-Φ(cS2[1] - S1mu))) / I_area_rS2`
-- for k=1..(K-2):
-  - `p_FA[k+1] = ((1-Φ(cS2[k] - S1mu)) - (1-Φ(cS2[k+1] - S1mu))) / I_area_rS2`
-- `p_FA[K] = (1-Φ(cS2[K-1] - S1mu)) / I_area_rS2`
+### 5.2 FA probabilities (stimulus S1, responded S2; K bins)
+Let `cS2[j]` be ordered (`j=1..K-1`).
 
-### 6.3 Block 3: counts[s, 2K+1:3K] (M block; S2 stim, responded S1)
-Same as CR but using S2mu and I_area_rS1:
+- `p_FA[1] = [Φ(cS2[1] - S1mu) - Φ(c1 - S1mu)] / I_area_rS2`
+- for k=1..K-2:  
+  `p_FA[k+1] = [Φ(cS2[k+1] - S1mu) - Φ(cS2[k] - S1mu)] / I_area_rS2`
+- `p_FA[K] = [1 - Φ(cS2[K-1] - S1mu)] / I_area_rS2`
+
+### 5.3 M probabilities (stimulus S2, responded S1; K bins)
 - `p_M[1] = Φ(cS1[1] - S2mu) / I_area_rS1`
-- for k=1..(K-2):
-  - `p_M[k+1] = (Φ(cS1[k+1] - S2mu) - Φ(cS1[k] - S2mu)) / I_area_rS1`
-- `p_M[K] = (Φ(c1 - S2mu) - Φ(cS1[K-1] - S2mu)) / I_area_rS1`
+- for k=1..K-2:  
+  `p_M[k+1] = [Φ(cS1[k+1] - S2mu) - Φ(cS1[k] - S2mu)] / I_area_rS1`
+- `p_M[K] = [Φ(c1 - S2mu) - Φ(cS1[K-1] - S2mu)] / I_area_rS1`
 
-### 6.4 Block 4: counts[s, 3K+1:4K] (H block; S2 stim, responded S2)
-Same as FA but using S2mu and C_area_rS2:
-- `p_H[1] = ((1-Φ(c1 - S2mu)) - (1-Φ(cS2[1] - S2mu))) / C_area_rS2`
-- for k=1..(K-2):
-  - `p_H[k+1] = ((1-Φ(cS2[k] - S2mu)) - (1-Φ(cS2[k+1] - S2mu))) / C_area_rS2`
-- `p_H[K] = (1-Φ(cS2[K-1] - S2mu)) / C_area_rS2`
+### 5.4 H probabilities (stimulus S2, responded S2; K bins)
+- `p_H[1] = [Φ(cS2[1] - S2mu) - Φ(c1 - S2mu)] / C_area_rS2`
+- for k=1..K-2:  
+  `p_H[k+1] = [Φ(cS2[k+1] - S2mu) - Φ(cS2[k] - S2mu)] / C_area_rS2`
+- `p_H[K] = [1 - Φ(cS2[K-1] - S2mu)] / C_area_rS2`
 
-### 6.5 Underflow handling
-JAGS applies elementwise flooring:
-- `pT = ifelse(p < Tol, Tol, p)`
+### 5.5 Tol clamping
+For numerical stability:
+- `p_* = max(p_*, Tol)` elementwise  
+(and renormalize if required by the chosen Multinomial implementation).
 
-**PyMC adaptation requirement:** If needed for `Multinomial`, floor then renormalize within each block so probabilities sum to 1. Document this explicitly if done.
+### 5.6 Likelihood statements (per subject)
+- `CR_counts ~ Multinomial(n=CR, p=p_CR)`
+- `FA_counts ~ Multinomial(n=FA, p=p_FA)`
+- `M_counts  ~ Multinomial(n=M,  p=p_M)`
+- `H_counts  ~ Multinomial(n=H,  p=p_H)`
 
----
-
-## 7) Regression model on logMratio (exact JAGS logic)
-
-Per subject s:
-- `delta[s] ~ StudentT(df=5, loc=0, scale=sigma_delta)`
-- `logMratio[s] = mu_logMratio + Σ_j mu_beta[j] * cov[j,s] + epsilon_logMratio * delta[s]`
-- `Mratio[s] = exp(logMratio[s])`
-
-Hyperpriors (JAGS):
-- `mu_logMratio ~ Normal(0, sd=1)`
-- for each covariate j:
-  - `mu_beta[j] ~ Normal(0, sd=1)`
-- `sigma_delta ~ HalfNormal(sd=1)`
-- `epsilon_logMratio ~ Beta(1,1)`
-- `sigma_logMratio = abs(epsilon_logMratio) * sigma_delta`
+This matches the MATLAB regression JAGS scripts exactly.
 
 ---
 
-## 8) API contract (v1)
+## 6) What the regression coefficients mean (plain language)
 
-### 8.1 Proposed public entry point
-`metadpy.bayesian.rhmetad(...)`
+- `Mratio` is **metacognitive efficiency**: how informative a person’s confidence is about being correct, *relative* to their basic task sensitivity (d′).
+- The model works on `log(Mratio)` so that:
+  - regression is linear and unconstrained,
+  - but Mratio itself stays positive (`exp(...)`).
 
-It should mirror `hmetad` conventions where possible:
-- accept either:
-  - direct `nR_S1`, `nR_S2` arrays, OR
-  - trial-level DataFrame inputs (stimuli/accuracy/confidence + subject id)
-- accept covariates in a way that **cannot silently reorder subjects** (e.g., aligned by subject id)
+If you have one covariate `x` and coefficient `β`:
+- `log(Mratio) = intercept + β·x + noise`
+- Therefore, **a 1-unit increase in x multiplies Mratio by exp(β)**.
 
-Must support:
-- `backend="pymc"` (default) and `backend="numpyro"` (JAX)
+So:
+- `β > 0` → higher trait score predicts **better metacognitive efficiency**
+- `β < 0` → higher trait score predicts **worse metacognitive efficiency**
 
-Suggested signature sketch (adapt to repo norms):
-- `rhmetad(data=None, nR_S1=None, nR_S2=None, covariates=None, subject=None, nRatings=None, ..., backend="pymc", sample_model=True, output="model", **kwargs)`
-
-### 8.2 Required outputs
-At minimum, return the same style outputs as `hmetad`:
-- if `output="model"`: `(model, idata)`
-- if `output="dataframe"`: per-subject summary including:
-  - `d` (d1), `c` (c1), `meta_d`, `m_ratio`
-  - regression coefficient posterior summaries (β)
+The Student-t noise + epsilon scaling is a “robust” choice:
+- it tolerates occasional outlier subjects without forcing β to absorb them.
 
 ---
 
-## 9) Validation requirements (must pass)
+## 7) Apple Silicon acceleration hook (PyMC / PyTensor)
 
-### 9.1 β recovery
-Simulate data *consistent with this model* (logMratio regression + SDT likelihood), fit rhmetad, and confirm β posterior concentrates near truth.
+PyMC supports a `compile_kwargs` argument in `pm.sample(...)` that is passed to compiled functions used by the step methods.  
+This can be used to request alternative PyTensor compilation modes, including **MLX** (Apple Silicon acceleration) when available.
 
-### 9.2 PPC / sanity
-At least one posterior predictive check:
-- generate replicated counts from posterior predictive
-- compare simple summaries (e.g., marginal proportions per block) to observed
+Implementation requirement:
+- expose `compile_mode` (string) OR `compile_kwargs` (dict) in the RHMetaD API and pass through to `pm.sample`.
 
 ---
 
-## 10) Apple Silicon / Metal note (documentation requirement)
-- `backend="pymc"`: CPU sampling; on ARM64, PyTensor may use Apple Accelerate for BLAS (performance).
-- `backend="numpyro"`: uses JAX-based NUTS; if user installs Apple’s `jax-metal`, JAX may execute on Metal GPU, but upstream support is experimental and may fail.
+## Appendix: Reference links (GitHub)
+(Placed in a code block to comply with “no raw URLs in prose”.)
 
-Document clearly; do not promise speedups.
+```text
+HMeta-d repository:
+https://github.com/metacoglab/HMeta-d
+
+Key MATLAB regression files:
+https://github.com/metacoglab/HMeta-d/blob/master/Matlab/fit_meta_d_mcmc_regression.m
+https://github.com/metacoglab/HMeta-d/blob/master/Matlab/Bayes_metad_group_regress_nodp.txt
+https://github.com/metacoglab/HMeta-d/blob/master/Matlab/Bayes_metad_group_regress_nodp_2cov.txt
+https://github.com/metacoglab/HMeta-d/blob/master/Matlab/trials2counts.m
+```
+

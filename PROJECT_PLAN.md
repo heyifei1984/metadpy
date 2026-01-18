@@ -1,84 +1,123 @@
-# PROJECT_PLAN.md — RHMeta-d regression (MATLAB/JAGS parity)
+# PROJECT_PLAN.md
 
-## Goal (v1)
-Implement the **hierarchical regression** model from the MATLAB/JAGS HMeta-d toolbox in this metadpy fork:
-- MATLAB entry point: `fit_meta_d_mcmc_regression.m`
-- JAGS model: `Bayes_metad_group_regress_nodp*.txt` (1–5 covariates)
+## Project name
+RHMetaD: Regression Hierarchical Meta-d for metadpy
 
-Key properties of the v1 model:
-- Regression is on **log(meta-d′/d′)** (“logMratio”).
-- Uses a robust **Student-t (df=5)** subject deviation term with parameter expansion (epsilon * delta).
-- Uses “**nodp**”: type-1 d′ and c are computed outside and treated as **fixed data**.
+## Goal
+Add hierarchical Bayesian **regression** modeling of metacognitive efficiency (log M-ratio) to `metadpy`, mirroring MATLAB HMeta-d regression (nodp) behavior.
 
----
+## Primary success criteria
+- A new function (proposed name: `rhmetad`) fits a group regression model and returns posterior samples.
+- Matches MATLAB regression logic:
+  - fixed type-1 d′ and c1 point estimates per subject,
+  - hierarchical regression on log(Mratio),
+  - same priors (mu_c2, sigma_c2, Student-t delta, Beta epsilon),
+  - same likelihood construction for CR/FA/M/H counts.
+- Works on Apple Silicon CPU; optional MLX acceleration is exposed via a clean argument.
 
-## Scope (v1)
-### In scope
-- New regression-capable function, consistent with existing API style (proposed: `metadpy.bayesian.rhmetad`).
-- Support **P ≥ 1** covariates (not limited to 5, even though MATLAB ships 1–5-cov JAGS templates).
-- Maintain metadpy backend pattern:
-  - `backend="pymc"` (default)
-  - `backend="numpyro"` (JAX sampler path)
-- Documentation:
-  - RHMetaD.md as the precise model contract
-  - short usage example
+## Milestones
 
-### Out of scope (v1)
-- Trial-level regressors
-- Response-conditional regression model (unless explicitly specified)
-- Estimating d′ inside the model (that corresponds to a different JAGS file family)
+### M0 — Lock the spec (docs-only)
+**Deliverables**
+- `docs/RHMetaD.md` fully specifies:
+  - data conventions and ordering
+  - pre-processing for d1/c1
+  - exact priors
+  - likelihood and probability equations
+  - outputs and naming
 
----
-
-## Milestones (PR-oriented)
-
-### M0 — Reference import + spec hardening
-Deliverables:
-- `references/hmetad_matlab/Matlab/` contains the minimum reference set listed in AGENTS.md.
-- `RHMetaD.md` updated to:
-  - match the JAGS equations/priors exactly
-  - define I/O contract + expected variable names
-  - document any necessary PyMC adaptations (e.g., probability floor + renormalization)
-
-Acceptance:
-- No **UNVERIFIED** items remain for the v1 regression model.
-
-### M1 — Core model implementation
-Deliverables:
-- Internal model builder (location consistent with repo conventions, e.g. `metadpy/models/rhmetad.py`).
-- Public API wrapper `metadpy.bayesian.rhmetad(...)` following the `hmetad` style:
-  - supports `sample_model=True/False`
-  - supports `backend="pymc" | "numpyro"`
-  - returns `(model, idata)` or a DataFrame if `output="dataframe"` (match repo norms)
-
-Acceptance:
-- Runs end-to-end on a small simulated dataset.
-
-### M2 — Validation tests
-Deliverables:
-- `test_rhmetad_shapes.py` (shapes + invariants)
-- `test_rhmetad_recovery.py` (β recovery with simulation consistent with the model)
-- `test_rhmetad_ppc.py` (minimal PPC)
-
-Acceptance:
-- `pytest` passes
-- recovery is stable (avoid flaky thresholds)
-
-### M3 — Documentation + example
-Deliverables:
-- Update docs pages / docstrings similarly to `hmetad`:
-  - “how to supply covariates”
-  - “how to interpret β” (exp(beta) multiplicative effect on Mratio)
-- Note on Apple Silicon:
-  - CPU path is the default
-  - JAX/Metal path is “best-effort / experimental” and depends on user environment
-
-Acceptance:
-- A user can run RHMeta-d from docs alone.
+**Exit criteria**
+- No “UNVERIFIED” sections remain for the MATLAB regression model itself.
 
 ---
 
-## Definition of done (v1)
-- RHMeta-d regression implemented with MATLAB/JAGS-parity priors and likelihood.
-- β recovery demonstrated via tests.
-- Backend selection integrated cleanly and consistently with existing `hmetad` patterns.
+### M1 — Data preprocessing utilities (group-level)
+**Tasks**
+- Implement `preprocess_group(...)` (or equivalent) that:
+  - groups trials by subject
+  - calls `trials2counts(...)`
+  - calls `extractParameters(...)` for each subject
+  - returns arrays: `d1[S]`, `c1[S]`, `counts[S, 4K]`, plus `CR, FA, M, H`
+- Implement covariate ingestion:
+  - from DataFrame columns OR from matrix
+  - optional z-scoring and NaN handling
+  - strict alignment of cov rows to subject order
+
+**Exit criteria**
+- Unit test: given a small synthetic dataset with 2 subjects, output shapes match expectation.
+
+---
+
+### M2 — PyMC model builder (group regression)
+**Tasks**
+- Implement a model builder function:
+  - e.g., `build_rhmetad_model(data_dict, X, ...) -> pm.Model`
+- Must include:
+  - `mu_logMratio`, `beta[p]`, `sigma_delta`, `epsilon_logMratio`
+  - subject-level `delta[s]` and `logMratio[s]`
+  - `Mratio[s] = exp(logMratio[s])`
+  - `meta_d[s] = Mratio[s] * d1[s]`
+  - criteria priors with ordering constraints
+  - multinomial likelihood split into CR/FA/M/H (as in MATLAB regression scripts)
+- Add optional `Tol` clamping for probabilities.
+
+**Exit criteria**
+- Smoke test: model builds and samples for 3 subjects × 4 ratings without errors.
+
+---
+
+### M3 — Public API + ergonomics
+**Tasks**
+- Add `rhmetad(...)` to `metadpy.bayesian` (and `__init__.py` if needed).
+- Signature should support:
+  - DataFrame + column names + subject + covariates
+  - or precomputed `nR_S1/nR_S2` + `X`
+- Provide sampling options:
+  - `num_samples`, `num_chains`, `tune`, `target_accept`, `random_seed`
+- Add Apple Silicon acceleration hook:
+  - `compile_mode: str | None = None`
+  - `compile_kwargs: dict | None = None`
+  - If `compile_kwargs` not provided and `compile_mode` is, pass `compile_kwargs={"mode": compile_mode}` to `pm.sample`.
+
+**Exit criteria**
+- Example snippet in docstring runs end-to-end.
+
+---
+
+### M4 — Verification & tests
+**Tasks**
+- Add tests:
+  - shape validation errors (bad cov dims, wrong nRatings, etc.)
+  - parameter recovery test:
+    - simulate data with known positive β
+    - fit model
+    - assert posterior mean(β) > 0 (and roughly near true)
+- If possible, add a minimal cross-check vs MATLAB outputs (optional):
+  - same synthetic counts
+  - compare posterior mean logMratio correlation (not exact match).
+
+**Exit criteria**
+- `pytest` passes on CI / local.
+
+---
+
+### M5 — Documentation
+**Tasks**
+- Add `docs/` page or README section:
+  - what RHMetaD does
+  - input formats
+  - interpretation of β and logMratio
+  - Apple Silicon: CPU vs MLX caveats
+
+**Exit criteria**
+- docs build (if repo uses sphinx) OR README renders.
+
+## Risks / tricky parts
+- Enforcing ordered type-2 criteria in a NUTS-friendly way while staying faithful to MATLAB’s “sample then sort” approach.
+- MLX backend is still evolving; many ops may be missing; must be optional.
+
+## Non-goals
+- full d′ estimation inside regression model
+- within-subject regression
+- “perfect numerical parity” with MATLAB JAGS chains
+

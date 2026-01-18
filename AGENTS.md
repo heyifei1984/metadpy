@@ -1,99 +1,91 @@
 # AGENTS.md
 
-## Mission (what you are building)
-Implement **HMeta-d (MATLAB/JAGS) parity** for the *hierarchical regression* model on metacognitive efficiency (meta-d′/d′ a.k.a. **Mratio**) inside this metadpy fork.
+## Mission
 
-**Primary deliverable (v1):**
-- A new public function (proposed: `metadpy.bayesian.rhmetad(...)`) that matches the MATLAB toolbox regression model implemented by:
-  - `Matlab/fit_meta_d_mcmc_regression.m`
-  - `Matlab/Bayes_metad_group_regress_nodp*.txt` (1–5 covariates)
+Implement **RHMetaD**: a hierarchical Bayesian *regression* extension of HMeta-d, in **Python / metadpy**, matching the logic of the MATLAB HMeta-d regression implementation as closely as is practical for PyMC (NUTS).
 
-This is the “**nodp**” regression model: **d′ and c are treated as fixed data** (computed from rating counts), and the hierarchical layer is on **logMratio** with a robust (t) subject-deviation term.
+The end result should be “cloneable → installable → runnable” and should include:
+- A new public API function (or method) that fits the regression model.
+- A PyMC model builder for the regression model.
+- Tests (at least: shape checks + parameter recovery on simulated data).
+- Minimal docs / example usage.
+- A clean optional switch for Apple Silicon acceleration modes (CPU vs MLX/Metal).
 
----
+## Ground-truth references to mirror
 
-## Required reading before coding (do this first)
-1) `PROJECT_PLAN.md`
-2) `RHMetaD.md` (this repo’s spec/contract)
-3) The existing `metadpy.bayesian.hmetad` implementation and its tests (for patterns, output formats, backend handling).
-4) The copied MATLAB/JAGS reference files in this repo (see below).
+The MATLAB HMeta-d regression implementation uses JAGS model scripts named like:
 
----
+```text
+HMeta-d/Matlab/Bayes_metad_group_regress_nodp.txt
+HMeta-d/Matlab/Bayes_metad_group_regress_nodp_2cov.txt
+...
+HMeta-d/Matlab/Bayes_metad_group_regress_nodp_5cov.txt
+HMeta-d/Matlab/fit_meta_d_mcmc_regression.m
+HMeta-d/Matlab/trials2counts.m
+```
 
-## Reference files (must be present in-repo)
-To avoid guessing, copy the following files from metacoglab/HMeta-d into this repo under:
-`references/hmetad_matlab/Matlab/`
+If these files exist in your workspace, treat them as **ground truth**. If they are not present locally, the full specification is in `docs/RHMetaD.md`.
 
-Minimum set:
-- `fit_meta_d_mcmc_regression.m`
-- `fit_meta_d_mcmc_group.m` (for data ordering explanation)
-- `trials2counts.m` (for rating bin ordering)
-- `Bayes_metad_group_regress_nodp.txt`
-- `Bayes_metad_group_regress_nodp_2cov.txt`
-- `Bayes_metad_group_regress_nodp_3cov.txt`
-- `Bayes_metad_group_regress_nodp_4cov.txt`
-- `Bayes_metad_group_regress_nodp_5cov.txt`
-- `Bayes_metad_group_nodp.txt` (baseline non-regression “nodp” comparator)
+> IMPORTANT: In MATLAB, regression is implemented in the **no-d′ (nodp)** variant:
+> - Type-1 **d′ (d1)** and **criterion (c1)** are computed as point estimates from the counts,
+> - then held **fixed** in the hierarchical model,
+> - and meta-d′ is defined as `meta_d = Mratio * d1`.
 
-If the repo already contains equivalent reference notes, do not duplicate; instead link to them.
+## Scope
 
----
+### In-scope (v1)
+- Group-level regression of **log(Mratio)** on continuous covariate(s), as in MATLAB regression scripts.
+- Multiple covariates (any P, not limited to 5).
+- Inputs:
+  - either trial-level DataFrame + subject column + covariate columns
+  - or precomputed `nR_S1`, `nR_S2` + covariate matrix
+- Outputs:
+  - posterior (InferenceData or MultiTrace) containing `mu_logMratio`, `beta`, `logMratio`, `Mratio`, `meta_d`,
+    and also criteria hyperparameters `mu_c2`, `sigma_c2`, and derived `sigma_logMratio`.
+- Optional Apple Silicon acceleration toggles:
+  - `compile_mode="MLX"` option via `pm.sample(compile_kwargs={"mode": "MLX"})`
+  - `compile_mode=None` (default CPU)
+  - Allow passing full `compile_kwargs` through.
 
-## Scientific correctness rules (hard constraints)
-### A) Regression target and equation (must match MATLAB/JAGS)
-Regression is on **logMratio**:
-- `logMratio[s] = mu_logMratio + Σ_j (mu_beta[j] * cov[j,s]) + epsilon_logMratio * delta[s]`
-- `Mratio[s] = exp(logMratio[s])`
-- `meta_d[s] = Mratio[s] * d1[s]`
+### Explicitly out-of-scope (v1)
+- Full “estimate d′ inside the hierarchical model” regression variant (not provided by MATLAB regression scripts).
+- Repeated-measures regression / within-subject regression.
+- Extensive benchmarking / performance tuning.
 
-Robust deviation term (as in the regression JAGS model):
-- `delta[s] ~ StudentT(df=5, loc=0, scale=sigma_delta)` (JAGS uses precision `lambda_delta = sigma_delta^-2`)
-- `epsilon_logMratio ~ Beta(1,1)`
-- `sigma_logMratio = abs(epsilon_logMratio) * sigma_delta`
+## Implementation constraints
 
-Priors (JAGS):
-- `mu_logMratio ~ Normal(0, sd=1)`
-- `mu_beta[j] ~ Normal(0, sd=1)`
-- `sigma_delta ~ HalfNormal(sd=1)` (JAGS: Normal(0,1) truncated >0)
+- **Do not break** existing public APIs.
+- Keep changes minimal and well-contained:
+  - New model file under `metadpy/models/` (e.g., `group_level_regression_pymc.py`)
+  - New user-facing function under `metadpy/bayesian.py` (e.g., `rhmetad(...)`)
+- Follow repo tooling (black, isort, mypy if present; run existing test suite).
+- Use vectorized PyTensor operations where possible.
+- Handle common input errors with clear messages:
+  - mismatched number of subjects between data and covariates
+  - non-finite covariates
+  - bad `nRatings`
+  - invalid count shapes
 
-### B) Type 2 SDT likelihood and criteria priors (must match MATLAB/JAGS)
-- The multinomial likelihood structure, probability construction via `phi(.)`, and the criteria priors/truncations must match `Bayes_metad_group_regress_nodp*.txt` (see RHMetaD.md for the full set of equations).
+## Quality bar / definition of done
 
-### C) d′ and c preprocessing (v1 must match MATLAB regression path)
-- In v1, replicate the regression “nodp” model:
-  - compute subject-level `d1[s]` and `c1[s]` from rating counts **outside** the Bayesian model, using the MATLAB algorithm (see RHMetaD.md).
-  - pass `d1` and `c1` into the Bayesian model as **observed** arrays.
+- ✅ `pytest` passes locally
+- ✅ basic simulated-data recovery test passes (β sign and rough magnitude)
+- ✅ docs string example runs
+- ✅ model runs end-to-end on small dataset (2–5 subjects, 4 ratings)
 
-Any alternative (e.g., estimating d′ inside the model) must be treated as a separate v2 milestone.
+## Suggested work plan (agent)
 
----
+1. **Read** `docs/RHMetaD.md` and confirm the model equations & data conventions.
+2. Implement or finalize `preprocess_group(...)` (currently commented in `metadpy.bayesian` in older versions).
+3. Implement PyMC regression model builder:
+   - logMratio regression with robust Student-t + epsilon expansion (as in MATLAB)
+   - criteria priors as in MATLAB (ordering constraints handled in a NUTS-compatible way)
+4. Add `rhmetad(...)` entry point:
+   - accepts either DataFrame or `nR_S1/nR_S2`
+   - accepts covariates as DataFrame columns or matrix
+   - exposes `compile_mode` / `compile_kwargs`
+5. Tests: at minimum
+   - shape validations
+   - deterministic simulation + recovery (β > 0 should be recovered > 0)
+6. Docs: short usage snippet and parameter notes.
 
-## Backend and Apple Silicon guidance (keep it clean)
-- Follow metadpy’s existing backend pattern (as in `hmetad`): support at least `backend="pymc"` and `backend="numpyro"` (JAX).
-- **Do not promise GPU/Metal acceleration by default.**
-  - If `backend="numpyro"` and the user has Apple’s `jax-metal` installed, JAX *may* use Metal GPU acceleration, but this is experimental upstream.
-- Implementation rule:
-  - Add backend selection in RHMeta-d without adding new heavyweight deps; rely on optional dependencies already used by `hmetad`.
-
----
-
-## Non-goals (v1)
-- Do not refactor existing `metadpy.bayesian.hmetad` unless required for code reuse.
-- Do not add new PPL frameworks beyond what metadpy already supports.
-- Do not implement trial-level regressors in v1.
-
----
-
-## Tests (must add)
-- Shape/invariant tests (probability blocks have correct shapes; no silent broadcasting errors).
-- Simulation-based **β recovery** (regression coefficients).
-- A minimal posterior predictive sanity check (PPC) or comparable check.
-
----
-
-## PR checklist
-- [ ] RHMetaD.md updated to reflect actual implementation details (no drifting spec)
-- [ ] New tests added + passing (`pytest`)
-- [ ] New public API documented + example snippet included
-- [ ] Output includes posterior for β and Mratio/logMratio
-- [ ] No unrelated refactors
