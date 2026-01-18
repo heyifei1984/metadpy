@@ -1,109 +1,99 @@
 # AGENTS.md
 
 ## Mission (what you are building)
-This repository will add a hierarchical Bayesian *regression* extension for metacognitive efficiency (meta-d'/d' a.k.a. Mratio) to the existing meta-d'/HMeta-d-style modeling code.
+Implement **HMeta-d (MATLAB/JAGS) parity** for the *hierarchical regression* model on metacognitive efficiency (meta-d′/d′ a.k.a. **Mratio**) inside this metadpy fork.
 
-Primary deliverable:
-- A new public function implementing RHMeta-d-style regression on subject-level metacognitive efficiency (typically modeled on log(Mratio)), with MCMC sampling via the repo’s existing Bayesian backend.
+**Primary deliverable (v1):**
+- A new public function (proposed: `metadpy.bayesian.rhmetad(...)`) that matches the MATLAB toolbox regression model implemented by:
+  - `Matlab/fit_meta_d_mcmc_regression.m`
+  - `Matlab/Bayes_metad_group_regress_nodp*.txt` (1–5 covariates)
 
-## Non-goals (do NOT do these unless explicitly instructed)
-- Do not rewrite existing meta-d' or hmeta-d implementations.
-- Do not change existing public APIs unless the project plan explicitly calls for it.
-- Do not introduce new probabilistic-programming frameworks (stick to what the repo already uses).
-- Do not add heavy new dependencies without a written justification and approval.
+This is the “**nodp**” regression model: **d′ and c are treated as fixed data** (computed from rating counts), and the hierarchical layer is on **logMratio** with a robust (t) subject-deviation term.
 
-## Required reading before coding
-1) Read `PROJECT_PLAN.md` (milestones + acceptance criteria).
-2) If present, read `docs/model_spec_rhmetad.md` (math + priors + outputs).
-3) Read the existing Bayesian model implementation in this repo (e.g., the current `hmetad` function and utilities).
+---
 
-If `docs/model_spec_rhmetad.md` does not exist yet, create it as the first PR (see PROJECT_PLAN).
+## Required reading before coding (do this first)
+1) `PROJECT_PLAN.md`
+2) `RHMetaD.md` (this repo’s spec/contract)
+3) The existing `metadpy.bayesian.hmetad` implementation and its tests (for patterns, output formats, backend handling).
+4) The copied MATLAB/JAGS reference files in this repo (see below).
 
-## Working style (how to operate)
-- Start every task by producing a short plan with:
-  - Files you will touch
-  - Tests you will add/update
-  - How you will validate correctness (simulation/recovery)
-- Work in small, reviewable commits and PR-sized chunks.
-- Prefer minimal diffs over large refactors.
+---
+
+## Reference files (must be present in-repo)
+To avoid guessing, copy the following files from metacoglab/HMeta-d into this repo under:
+`references/hmetad_matlab/Matlab/`
+
+Minimum set:
+- `fit_meta_d_mcmc_regression.m`
+- `fit_meta_d_mcmc_group.m` (for data ordering explanation)
+- `trials2counts.m` (for rating bin ordering)
+- `Bayes_metad_group_regress_nodp.txt`
+- `Bayes_metad_group_regress_nodp_2cov.txt`
+- `Bayes_metad_group_regress_nodp_3cov.txt`
+- `Bayes_metad_group_regress_nodp_4cov.txt`
+- `Bayes_metad_group_regress_nodp_5cov.txt`
+- `Bayes_metad_group_nodp.txt` (baseline non-regression “nodp” comparator)
+
+If the repo already contains equivalent reference notes, do not duplicate; instead link to them.
+
+---
 
 ## Scientific correctness rules (hard constraints)
-- Any modeling choice that affects inference must be documented in `docs/model_spec_rhmetad.md`.
-- If you cannot verify a detail from a reliable source (paper, official toolbox, or existing repo code), label it clearly as **UNVERIFIED** in the spec and open a tracking issue.
-- Add simulation-based tests:
-  - Parameter recovery for regression coefficients
-  - Posterior predictive sanity checks (at least one)
-- Ensure covariates align correctly to subject IDs (no silent re-ordering).
+### A) Regression target and equation (must match MATLAB/JAGS)
+Regression is on **logMratio**:
+- `logMratio[s] = mu_logMratio + Σ_j (mu_beta[j] * cov[j,s]) + epsilon_logMratio * delta[s]`
+- `Mratio[s] = exp(logMratio[s])`
+- `meta_d[s] = Mratio[s] * d1[s]`
 
-## Repo hygiene and safety
-- Do not run destructive shell commands.
-- Do not modify files outside the repo workspace.
-- Do not fetch random external scripts.
-- Prefer deterministic commands and pinned dependencies where possible.
+Robust deviation term (as in the regression JAGS model):
+- `delta[s] ~ StudentT(df=5, loc=0, scale=sigma_delta)` (JAGS uses precision `lambda_delta = sigma_delta^-2`)
+- `epsilon_logMratio ~ Beta(1,1)`
+- `sigma_logMratio = abs(epsilon_logMratio) * sigma_delta`
 
-## Lint / format / tests
-Use the repo’s existing tooling. If unsure:
-- Find and follow existing CI workflows and dev instructions in README.
-- Run the full test suite before finishing a PR.
-- Run formatting/lint steps that the repo expects (e.g., pre-commit, ruff/black, etc.), if configured.
+Priors (JAGS):
+- `mu_logMratio ~ Normal(0, sd=1)`
+- `mu_beta[j] ~ Normal(0, sd=1)`
+- `sigma_delta ~ HalfNormal(sd=1)` (JAGS: Normal(0,1) truncated >0)
 
-## Review guidelines (used for @codex review)
-When reviewing changes, prioritize:
-1) Statistical/model correctness (likelihood, priors, parameterization)
-2) Tests (especially recovery tests)
-3) API stability and clear docstrings
-4) Performance only after correctness is established
+### B) Type 2 SDT likelihood and criteria priors (must match MATLAB/JAGS)
+- The multinomial likelihood structure, probability construction via `phi(.)`, and the criteria priors/truncations must match `Bayes_metad_group_regress_nodp*.txt` (see RHMetaD.md for the full set of equations).
 
-Treat the following as P0 issues:
-- Incorrect mapping between trials → counts → likelihood
-- Wrong handling of confidence rating bins
-- Covariate misalignment to subjects
-- Regression implemented “post-hoc” instead of inside the hierarchical model (unless explicitly intended)
+### C) d′ and c preprocessing (v1 must match MATLAB regression path)
+- In v1, replicate the regression “nodp” model:
+  - compute subject-level `d1[s]` and `c1[s]` from rating counts **outside** the Bayesian model, using the MATLAB algorithm (see RHMetaD.md).
+  - pass `d1` and `c1` into the Bayesian model as **observed** arrays.
 
-## PR checklist (must pass)
-- [ ] New/updated tests added and passing
-- [ ] Model spec updated (or created)
-- [ ] Clear docstring + example usage added for new public API
-- [ ] No unnecessary refactors
-- [ ] Outputs include regression posteriors and Mratio/logMratio posteriors
+Any alternative (e.g., estimating d′ inside the model) must be treated as a separate v2 milestone.
 
+---
 
+## Backend and Apple Silicon guidance (keep it clean)
+- Follow metadpy’s existing backend pattern (as in `hmetad`): support at least `backend="pymc"` and `backend="numpyro"` (JAX).
+- **Do not promise GPU/Metal acceleration by default.**
+  - If `backend="numpyro"` and the user has Apple’s `jax-metal` installed, JAX *may* use Metal GPU acceleration, but this is experimental upstream.
+- Implementation rule:
+  - Add backend selection in RHMeta-d without adding new heavyweight deps; rely on optional dependencies already used by `hmetad`.
 
+---
 
-# Repository Guidelines
+## Non-goals (v1)
+- Do not refactor existing `metadpy.bayesian.hmetad` unless required for code reuse.
+- Do not add new PPL frameworks beyond what metadpy already supports.
+- Do not implement trial-level regressors in v1.
 
-## Project Structure & Module Organization
-- `metadpy/` contains the core library modules (e.g., `sdt.py`, `mle.py`, `bayesian.py`, `plotting.py`) and package metadata in `__init__.py`.
-- `metadpy/models/` holds model definitions (e.g., subject-level PyMC model).
-- `metadpy/datasets/` provides bundled sample data files.
-- `metadpy/tests/` contains the pytest suite; tests follow `test_*.py`.
-- `docs/` and `docs/source/` hold the documentation sources and tutorial notebooks.
-- `requirements*.txt` and `environment.yml` capture runtime, test, and docs dependencies.
+---
 
-## Build, Test, and Development Commands
-- `pip install -e .` installs the package in editable mode for local development.
-- `python -m pip install -r requirements-tests.txt` installs test dependencies.
-- `pytest` runs the full test suite; use `pytest metadpy/tests/test_sdt.py` for a focused run.
-- `python -m pip install -r requirements-docs.txt` installs docs dependencies (for building docs locally).
+## Tests (must add)
+- Shape/invariant tests (probability blocks have correct shapes; no silent broadcasting errors).
+- Simulation-based **β recovery** (regression coefficients).
+- A minimal posterior predictive sanity check (PPC) or comparable check.
 
-## Coding Style & Naming Conventions
-- Follow Black formatting defaults (e.g., 88-character lines) and isort import ordering; the project advertises both.
-- Prefer explicit, descriptive function names mirroring existing modules (`dprime`, `roc_auc`, `metad`).
-- Use snake_case for functions and variables; keep module names short and domain-specific.
-- Static typing is encouraged; mypy is listed in badges, so keep annotations consistent where used.
+---
 
-## Testing Guidelines
-- Tests are written with pytest and live in `metadpy/tests/`.
-- Name new tests `test_<feature>.py` and new test functions `test_<behavior>()`.
-- Include coverage for both MLE and Bayesian paths when changing shared utilities.
-- Many tests assume scientific dependencies (NumPy/SciPy/Pandas/PyMC); ensure they are installed before running.
-
-## Commit & Pull Request Guidelines
-- Git history favors short, imperative summaries (e.g., “Update conf.py”, “add conda file (#12)”).
-- Keep commit messages concise, optionally include issue/PR references in parentheses.
-- PRs should describe the change, list tests run, and update docs/examples when behavior changes.
-- Include screenshots or notebook output updates when modifying plots or tutorials.
-
-## Security & Configuration Tips
-- Avoid committing large datasets; prefer adding small fixtures under `metadpy/datasets/`.
-- Keep dependency pins in `requirements*.txt` in sync with any new minimum versions you introduce.
+## PR checklist
+- [ ] RHMetaD.md updated to reflect actual implementation details (no drifting spec)
+- [ ] New tests added + passing (`pytest`)
+- [ ] New public API documented + example snippet included
+- [ ] Output includes posterior for β and Mratio/logMratio
+- [ ] No unrelated refactors

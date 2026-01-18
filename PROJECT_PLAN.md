@@ -1,127 +1,84 @@
-# PROJECT_PLAN.md
+# PROJECT_PLAN.md — RHMeta-d regression (MATLAB/JAGS parity)
 
-## Project title (working)
-RHMetaDPy: Hierarchical regression meta-d' / Mratio modeling in Python
+## Goal (v1)
+Implement the **hierarchical regression** model from the MATLAB/JAGS HMeta-d toolbox in this metadpy fork:
+- MATLAB entry point: `fit_meta_d_mcmc_regression.m`
+- JAGS model: `Bayes_metad_group_regress_nodp*.txt` (1–5 covariates)
 
-(Alternate names: `metadpy-rhmetad`, `metadpy-regression`, `rhmetad`)
+Key properties of the v1 model:
+- Regression is on **log(meta-d′/d′)** (“logMratio”).
+- Uses a robust **Student-t (df=5)** subject deviation term with parameter expansion (epsilon * delta).
+- Uses “**nodp**”: type-1 d′ and c are computed outside and treated as **fixed data**.
 
-## Goal
-Implement a hierarchical Bayesian regression extension for metacognitive efficiency (Mratio = meta-d'/d') that supports continuous subject-level covariates (e.g., trait measures) within the generative model.
-
-This should be implemented as an extension to the repo’s existing hierarchical Bayesian meta-d'/HMeta-d-style model, not as a post-hoc regression on point estimates.
+---
 
 ## Scope (v1)
 ### In scope
-- A new regression-capable model function, e.g. `rhmetad(...)` (name can be finalized later).
-- Continuous covariates at the subject level:
-  - Support 1+ regressors
-  - Include an intercept
-  - Provide recommended preprocessing (centering / z-scoring) with clear documentation
-- Returns:
-  - Posterior for regression coefficients (beta)
-  - Posterior for group-level parameters
-  - Posterior for subject-level metacognitive efficiency (Mratio or logMratio)
-  - A tidy summary table and a trace object (or the repo’s standard output)
-- Tests:
-  - Unit tests for shapes and invariants
-  - Simulation-based parameter recovery test(s)
+- New regression-capable function, consistent with existing API style (proposed: `metadpy.bayesian.rhmetad`).
+- Support **P ≥ 1** covariates (not limited to 5, even though MATLAB ships 1–5-cov JAGS templates).
+- Maintain metadpy backend pattern:
+  - `backend="pymc"` (default)
+  - `backend="numpyro"` (JAX sampler path)
+- Documentation:
+  - RHMetaD.md as the precise model contract
+  - short usage example
 
 ### Out of scope (v1)
-- Arbitrary per-trial regressors (trial-level predictors)
-- Complex multilevel structures beyond “subject-level covariates”
-- Model comparison framework (WAIC/LOO) unless already present
-- GPU acceleration work
+- Trial-level regressors
+- Response-conditional regression model (unless explicitly specified)
+- Estimating d′ inside the model (that corresponds to a different JAGS file family)
+
+---
 
 ## Milestones (PR-oriented)
 
-### Milestone 0 — Repo scaffolding (PR-0)
+### M0 — Reference import + spec hardening
 Deliverables:
-- `AGENTS.md` (this repo’s agent instructions)
-- `PROJECT_PLAN.md`
-- `docs/` folder created (if not already present)
-- Issue templates (optional)
+- `references/hmetad_matlab/Matlab/` contains the minimum reference set listed in AGENTS.md.
+- `RHMetaD.md` updated to:
+  - match the JAGS equations/priors exactly
+  - define I/O contract + expected variable names
+  - document any necessary PyMC adaptations (e.g., probability floor + renormalization)
 
 Acceptance:
-- Codex can read these files and reliably follow them.
+- No **UNVERIFIED** items remain for the v1 regression model.
 
-### Milestone 1 — Reference + spec (PR-1)
+### M1 — Core model implementation
 Deliverables:
-- `docs/model_spec_rhmetad.md`
-  - Defines the model in equations
-  - Defines data inputs (trial DF + subject ids + confidence bins)
-  - Defines exactly what is regressed (recommended: log(Mratio))
-  - Defines priors (match existing repo defaults where possible)
-  - Notes anything UNVERIFIED with a tracking issue link
-- `docs/reference_notes_hmetad.md`
-  - Short notes on how the MATLAB toolbox organizes parameters and naming
-  - Links to key reference files / docs
+- Internal model builder (location consistent with repo conventions, e.g. `metadpy/models/rhmetad.py`).
+- Public API wrapper `metadpy.bayesian.rhmetad(...)` following the `hmetad` style:
+  - supports `sample_model=True/False`
+  - supports `backend="pymc" | "numpyro"`
+  - returns `(model, idata)` or a DataFrame if `output="dataframe"` (match repo norms)
 
 Acceptance:
-- Spec is precise enough that an independent dev could implement it.
+- Runs end-to-end on a small simulated dataset.
 
-### Milestone 2 — Minimal implementation (PR-2)
+### M2 — Validation tests
 Deliverables:
-- New module/function implementing the regression model
-- Minimal example script or doc snippet showing usage on simulated data
-- Outputs include regression coefficients + Mratio/logMratio
+- `test_rhmetad_shapes.py` (shapes + invariants)
+- `test_rhmetad_recovery.py` (β recovery with simulation consistent with the model)
+- `test_rhmetad_ppc.py` (minimal PPC)
 
 Acceptance:
-- Runs end-to-end on a small simulated dataset
-- No breaking changes to existing APIs
+- `pytest` passes
+- recovery is stable (avoid flaky thresholds)
 
-### Milestone 3 — Validation tests (PR-3)
+### M3 — Documentation + example
 Deliverables:
-- Simulation utilities (if missing) to generate data with known beta
-- Parameter recovery tests:
-  - Fit model on simulated dataset
-  - Verify posterior for beta concentrates near ground truth (within tolerance / HDI rule)
-- Posterior predictive check (basic)
+- Update docs pages / docstrings similarly to `hmetad`:
+  - “how to supply covariates”
+  - “how to interpret β” (exp(beta) multiplicative effect on Mratio)
+- Note on Apple Silicon:
+  - CPU path is the default
+  - JAX/Metal path is “best-effort / experimental” and depends on user environment
 
 Acceptance:
-- Tests pass in CI
-- Recovery test is stable (does not flake)
+- A user can run RHMeta-d from docs alone.
 
-### Milestone 4 — Documentation (PR-4)
-Deliverables:
-- A tutorial page / notebook showing:
-  - Data format
-  - Adding covariates
-  - Interpreting beta posterior
-- API docs updated
-- Notes on limitations (edge cases: sparse errors, extreme confidence)
+---
 
-Acceptance:
-- A new user can run the tutorial without reading source code.
-
-### Milestone 5 — Release hygiene (PR-5)
-Deliverables:
-- Version bump (if repo uses versioning)
-- Changelog entry
-- Citation info (paper/toolbox references)
-- Optional: example figure generation
-
-Acceptance:
-- Releasable state with docs + tests.
-
-## Acceptance criteria (definition of done)
-- A public regression API exists and is documented.
-- The regression is inside the hierarchical model (not post-hoc).
-- Simulation-based tests demonstrate beta recovery.
-- Clear warnings/notes exist for data regimes known to be fragile for meta-d' models.
-
-## Operating procedure with Codex (suggested)
-### If using Codex Cloud
-- Use a cloud task to implement one milestone per PR.
-- Require the agent to open a PR and include:
-  - Summary of changes
-  - How it was tested
-  - Any remaining UNVERIFIED items
-
-### If using Codex CLI
-- Run in interactive mode from the repo root and work milestone-by-milestone.
-- Keep a clean git history; checkpoint before/after major changes.
-
-## Risk register
-- R1: Subtle likelihood / bin-order mistakes → mitigated by recovery tests + PPC.
-- R2: Covariate misalignment to subjects → mitigated by explicit joins and tests.
-- R3: Overfitting / identifiability issues in sparse data → mitigated by priors + docs.
+## Definition of done (v1)
+- RHMeta-d regression implemented with MATLAB/JAGS-parity priors and likelihood.
+- β recovery demonstrated via tests.
+- Backend selection integrated cleanly and consistently with existing `hmetad` patterns.
