@@ -339,6 +339,11 @@ def rhmetad(
     sample_model=True,
     num_samples: int = 1000,
     num_chains: int = 4,
+    draws: Optional[int] = None,
+    tune: Optional[int] = None,
+    chains: Optional[int] = None,
+    target_accept: Optional[float] = None,
+    random_seed: Optional[int] = None,
     compile_mode: Optional[str] = None,
     compile_kwargs: Optional[Dict] = None,
     **kwargs,
@@ -390,8 +395,18 @@ def rhmetad(
         The number of samples per chains to draw (defaults to `1000`).
     num_chains :
         The number of chains (defaults to `4`).
+    draws :
+        Number of draws to sample. If `None`, uses `num_samples`.
+    tune :
+        Number of tuning steps. If `None`, PyMC defaults are used.
+    chains :
+        Number of chains to sample. If `None`, uses `num_chains`.
+    target_accept :
+        Target acceptance probability passed to `pm.sample`.
+    random_seed :
+        Random seed passed to `pm.sample`.
     compile_mode :
-        Optional PyTensor compile mode (e.g. `"MLX"` for Apple Silicon).
+        Optional PyTensor compile mode.
     compile_kwargs :
         Full `compile_kwargs` dict passed to `pm.sample`.
     **kwargs : keyword arguments
@@ -451,6 +466,11 @@ def rhmetad(
         sample_model=sample_model,
         num_chains=num_chains,
         num_samples=num_samples,
+        draws=draws,
+        tune=tune,
+        chains=chains,
+        target_accept=target_accept,
+        random_seed=random_seed,
         **kwargs,
     )
 

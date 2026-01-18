@@ -1,5 +1,7 @@
 # Author: Nicolas Legrand <nicolas.legrand@cfin.au.dk>
 
+from typing import Optional
+
 import pytensor.tensor as pt
 import pymc as pm
 
@@ -20,6 +22,11 @@ def rhmetad_groupLevel(
     sample_model=True,
     num_samples: int = 1000,
     num_chains: int = 4,
+    draws: Optional[int] = None,
+    tune: Optional[int] = None,
+    chains: Optional[int] = None,
+    target_accept: Optional[float] = None,
+    random_seed: Optional[int] = None,
     **kwargs,
 ):
     """Hierarchical Bayesian regression of log Mratio (group level)."""
@@ -164,11 +171,24 @@ def rhmetad_groupLevel(
         )
 
         if sample_model is True:
+            if draws is None:
+                draws = num_samples
+            if chains is None:
+                chains = num_chains
+
+            sample_kwargs = dict(kwargs)
+            if tune is not None:
+                sample_kwargs["tune"] = tune
+            if target_accept is not None:
+                sample_kwargs["target_accept"] = target_accept
+            if random_seed is not None:
+                sample_kwargs["random_seed"] = random_seed
+
             trace = pm.sample(
                 return_inferencedata=True,
-                chains=num_chains,
-                draws=num_samples,
-                **kwargs,
+                chains=chains,
+                draws=draws,
+                **sample_kwargs,
             )
             return model, trace
 

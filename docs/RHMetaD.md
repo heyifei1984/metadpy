@@ -229,10 +229,10 @@ The Student-t noise + epsilon scaling is a “robust” choice:
 
 ---
 
-## 7) Apple Silicon acceleration hook (PyMC / PyTensor)
+## 7) Compile-mode hook (PyMC / PyTensor)
 
 PyMC supports a `compile_kwargs` argument in `pm.sample(...)` that is passed to compiled functions used by the step methods.  
-This can be used to request alternative PyTensor compilation modes, including **MLX** (Apple Silicon acceleration) when available.
+This can be used to request alternative PyTensor compilation modes when available.
 
 Implementation requirement:
 - expose `compile_mode` (string) OR `compile_kwargs` (dict) in the RHMetaD API and pass through to `pm.sample`.
@@ -252,4 +252,3 @@ https://github.com/metacoglab/HMeta-d/blob/master/Matlab/Bayes_metad_group_regre
 https://github.com/metacoglab/HMeta-d/blob/master/Matlab/Bayes_metad_group_regress_nodp_2cov.txt
 https://github.com/metacoglab/HMeta-d/blob/master/Matlab/trials2counts.m
 ```
-
