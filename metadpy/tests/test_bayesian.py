@@ -4,6 +4,7 @@ import unittest
 from unittest import TestCase
 
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytest
 
@@ -120,6 +121,53 @@ class Testsdt(TestCase):
         assert round(pymc_df["c"].values[0], 2) - 0.0 < 0.01
         assert round(pymc_df["meta_d"].values[0], 2) - 1.58 < 0.01
         assert round(pymc_df["m_ratio"].values[0], 2) - 1.03 < 0.01
+
+    def test_hmetad_group_level(self):
+        nR_S1 = np.array(
+            [
+                [52, 32, 35, 37, 26, 12, 4, 2],
+                [50, 30, 33, 35, 22, 10, 6, 3],
+            ]
+        )
+        nR_S2 = np.array(
+            [
+                [2, 5, 15, 22, 33, 38, 40, 45],
+                [3, 6, 12, 20, 30, 35, 42, 48],
+            ]
+        )
+        model, _ = hmetad(
+            nR_S1=nR_S1,
+            nR_S2=nR_S2,
+            nRatings=4,
+            subject="Subject",
+            sample_model=False,
+        )
+        assert isinstance(model, pm.Model)
+
+    def test_hmetad_rm1way(self):
+        nR_S1 = np.array([52, 32, 35, 37, 26, 12, 4, 2])
+        nR_S2 = np.array([2, 5, 15, 22, 33, 38, 40, 45])
+        base_df = ratings2df(nR_S1=nR_S1, nR_S2=nR_S2)
+        frames = []
+        for sub in [0, 1]:
+            for cond in [0, 1]:
+                df = base_df.copy()
+                df["Subject"] = sub
+                df["Condition"] = cond
+                frames.append(df)
+        rm_df = pd.concat(frames, ignore_index=True)
+
+        model, _ = hmetad(
+            data=rm_df,
+            nRatings=4,
+            stimuli="Stimuli",
+            accuracy="Accuracy",
+            confidence="Confidence",
+            subject="Subject",
+            within="Condition",
+            sample_model=False,
+        )
+        assert isinstance(model, pm.Model)
 
     def test_preprocess_group_covariate_layouts(self):
         nR_S1 = np.array(
