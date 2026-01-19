@@ -216,10 +216,17 @@ def hmetad(
 
     if (nR_S1 is not None) & (nR_S2 is not None):
         nR_S1, nR_S2 = np.asarray(nR_S1), np.asarray(nR_S2)
+        if nR_S1.shape != nR_S2.shape:
+            raise ValueError("nR_S1 and nR_S2 must have the same shape.")
+        n_counts = nR_S1.shape[-1]
         if nRatings is not None:
-            assert len(nR_S1) / 2 == nRatings
+            nRatings = _validate_nratings(nRatings)
+            if n_counts != 2 * nRatings:
+                raise ValueError("nR_S1 and nR_S2 must have length 2 * nRatings.")
         else:
-            nRatings = len(nR_S1) / 2
+            if n_counts % 2 != 0:
+                raise ValueError("nR_S1 and nR_S2 must have length 2 * nRatings.")
+            nRatings = n_counts // 2
 
     if nRatings is None:
         raise ValueError("You should provide the number of ratings")
@@ -259,6 +266,15 @@ def hmetad(
                 padding=padding,
                 padAmount=padAmount,
             )
+        elif nR_S1 is not None:
+            if nR_S1.ndim == 2 and nR_S1.shape[0] == 1:
+                nR_S1 = nR_S1[0]
+                nR_S2 = nR_S2[0]
+            elif nR_S1.ndim != 1:
+                raise ValueError(
+                    "Subject-level nR_S1 and nR_S2 must be 1D arrays. "
+                    "Provide a subject column for group-level data."
+                )
 
         pymcData = extractParameters(np.asarray(nR_S1), np.asarray(nR_S2))
 
