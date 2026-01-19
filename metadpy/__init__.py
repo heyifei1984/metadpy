@@ -1,4 +1,4 @@
-from .bayesian import extractParameters, hmetad, rhmetad
+from .bayesian import extractParameters, hmetad, hmetad_pooled, rhmetad
 from .datasets import load_dataset
 from .mle import fit_meta_d_logL, metad
 from .plotting import plot_confidence, plot_roc
@@ -14,6 +14,7 @@ from .utils import (
 __all__ = [
     "load_dataset",
     "hmetad",
+    "hmetad_pooled",
     "rhmetad",
     "extractParameters",
     "plot_confidence",

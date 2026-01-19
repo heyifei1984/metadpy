@@ -371,6 +371,155 @@ def hmetad(
 
 
 @pf.register_dataframe_method
+def hmetad_pooled(
+    data=None,
+    nR_S1=None,
+    nR_S2=None,
+    stimuli="Stimuli",
+    accuracy="Accuracy",
+    confidence="Confidence",
+    nRatings=None,
+    within=None,
+    nbins=4,
+    padding=False,
+    padAmount=None,
+    sample_model=True,
+    output: str = "model",
+    num_samples: int = 1000,
+    num_chains: int = 4,
+    **kwargs,
+):
+    """Pooled Bayesian meta-d' model.
+
+    Pools counts across subjects. If `within` is provided, pools within each
+    condition and fits a separate pooled model per condition.
+    """
+    modelScript = os.path.dirname(__file__) + "/models/"
+    sys.path.append(modelScript)
+
+    pooled_sets = []
+
+    if data is None:
+        if (nR_S1 is None) or (nR_S2 is None):
+            raise ValueError(
+                "If data is None, you should provide"
+                " the nR_S1 and nR_S2 vectors instead."
+            )
+        if within is not None:
+            raise ValueError("within is only supported when data is provided.")
+        nR_S1 = np.asarray(nR_S1)
+        nR_S2 = np.asarray(nR_S2)
+        if nR_S1.shape != nR_S2.shape:
+            raise ValueError("nR_S1 and nR_S2 must have the same shape.")
+        if nR_S1.ndim == 2:
+            nR_S1 = nR_S1.sum(axis=0)
+            nR_S2 = nR_S2.sum(axis=0)
+        elif nR_S1.ndim != 1:
+            raise ValueError("nR_S1 and nR_S2 must be 1D or 2D arrays.")
+
+        n_counts = nR_S1.shape[0]
+        if nRatings is not None:
+            nRatings = _validate_nratings(nRatings)
+            if n_counts != 2 * nRatings:
+                raise ValueError("nR_S1 and nR_S2 must have length 2 * nRatings.")
+        else:
+            if n_counts % 2 != 0:
+                raise ValueError("nR_S1 and nR_S2 must have length 2 * nRatings.")
+            nRatings = n_counts // 2
+
+        pooled_sets = [(None, nR_S1, nR_S2)]
+    else:
+        if nRatings is None:
+            raise ValueError("You should provide the number of ratings.")
+        nRatings = _validate_nratings(nRatings)
+
+        if data[confidence].nunique() > nRatings:
+            print(
+                (
+                    "The confidence columns contains more unique values than nRatings. "
+                    "The ratings are going to be discretized using "
+                    "metadpy.utils.discreteRatings()"
+                )
+            )
+            new_ratings, _ = discreteRatings(data[confidence].to_numpy(), nbins=nbins)
+            data = data.copy()
+            data.loc[:, confidence] = new_ratings
+
+        if within is None:
+            nR_S1_pool, nR_S2_pool = trials2counts(
+                data=data,
+                stimuli=stimuli,
+                accuracy=accuracy,
+                confidence=confidence,
+                nRatings=nRatings,
+                padding=padding,
+                padAmount=padAmount,
+            )
+            pooled_sets = [(None, nR_S1_pool, nR_S2_pool)]
+        else:
+            conditions = pd.unique(data[within])
+            for cond in conditions:
+                subset = data[data[within] == cond]
+                nR_S1_pool, nR_S2_pool = trials2counts(
+                    data=subset,
+                    stimuli=stimuli,
+                    accuracy=accuracy,
+                    confidence=confidence,
+                    nRatings=nRatings,
+                    padding=padding,
+                    padAmount=padAmount,
+                )
+                pooled_sets.append((cond, nR_S1_pool, nR_S2_pool))
+
+    from subject_level_pymc import hmetad_subjectLevel
+
+    model_outputs = {}
+    rows = []
+    for cond, nR_S1_pool, nR_S2_pool in pooled_sets:
+        pymcData = extractParameters(np.asarray(nR_S1_pool), np.asarray(nR_S2_pool))
+        model_output = hmetad_subjectLevel(
+            pymcData,
+            sample_model=sample_model,
+            num_chains=num_chains,
+            num_samples=num_samples,
+            **kwargs,
+        )
+
+        if sample_model is True:
+            model, traces = model_output
+            if output == "model":
+                model_outputs[cond] = (model, traces)
+            elif output == "dataframe":
+                meta_d_mean = az.summary(traces, var_names=["meta_d"])["mean"]["meta_d"]
+                row = {
+                    "d": pymcData["d1"],
+                    "c": pymcData["c1"],
+                    "meta_d": meta_d_mean,
+                    "m_ratio": meta_d_mean / pymcData["d1"],
+                }
+                if cond is not None:
+                    row[within] = cond
+                rows.append(row)
+            else:
+                raise ValueError("output must be 'model' or 'dataframe'.")
+        else:
+            if output != "model":
+                raise ValueError("output='dataframe' requires sample_model=True.")
+            model_outputs[cond] = model_output
+
+    if sample_model is True:
+        if output == "model":
+            if within is None:
+                return model_outputs[None]
+            return model_outputs
+        return pd.DataFrame(rows)
+
+    if within is None:
+        return model_outputs[None], None
+    return model_outputs, None
+
+
+@pf.register_dataframe_method
 def rhmetad(
     data=None,
     nR_S1=None,

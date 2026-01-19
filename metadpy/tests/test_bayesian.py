@@ -9,7 +9,7 @@ import pymc as pm
 import pytest
 
 from metadpy import load_dataset
-from metadpy.bayesian import extractParameters, hmetad, preprocess_group
+from metadpy.bayesian import extractParameters, hmetad, hmetad_pooled, preprocess_group
 from metadpy.utils import ratings2df
 
 
@@ -143,6 +143,52 @@ class Testsdt(TestCase):
             sample_model=False,
         )
         assert isinstance(model, pm.Model)
+
+    def test_hmetad_pooled_counts(self):
+        nR_S1 = np.array(
+            [
+                [52, 32, 35, 37, 26, 12, 4, 2],
+                [50, 30, 33, 35, 22, 10, 6, 3],
+            ]
+        )
+        nR_S2 = np.array(
+            [
+                [2, 5, 15, 22, 33, 38, 40, 45],
+                [3, 6, 12, 20, 30, 35, 42, 48],
+            ]
+        )
+        model, _ = hmetad_pooled(
+            nR_S1=nR_S1,
+            nR_S2=nR_S2,
+            nRatings=4,
+            sample_model=False,
+        )
+        assert isinstance(model, pm.Model)
+
+    def test_hmetad_pooled_within(self):
+        nR_S1 = np.array([52, 32, 35, 37, 26, 12, 4, 2])
+        nR_S2 = np.array([2, 5, 15, 22, 33, 38, 40, 45])
+        base_df = ratings2df(nR_S1=nR_S1, nR_S2=nR_S2)
+        frames = []
+        for sub in [0, 1]:
+            for cond in [0, 1]:
+                df = base_df.copy()
+                df["Subject"] = sub
+                df["Condition"] = cond
+                frames.append(df)
+        pooled_df = pd.concat(frames, ignore_index=True)
+
+        models, _ = hmetad_pooled(
+            data=pooled_df,
+            nRatings=4,
+            stimuli="Stimuli",
+            accuracy="Accuracy",
+            confidence="Confidence",
+            within="Condition",
+            sample_model=False,
+        )
+        assert isinstance(models[0], pm.Model)
+        assert isinstance(models[1], pm.Model)
 
     def test_hmetad_rm1way(self):
         nR_S1 = np.array([52, 32, 35, 37, 26, 12, 4, 2])
