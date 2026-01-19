@@ -8,7 +8,7 @@ import pymc as pm
 
 def phi(x):
     """Cumulative normal distribution."""
-    return 0.5 + 0.5 * pt.erf(x / pt.sqrt(2))
+    return 0.5 * pt.erfc(-x / pt.sqrt(2))
 
 
 def _clamp_probs(p, tol):
