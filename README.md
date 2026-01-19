@@ -207,6 +207,31 @@ az.summary(trace)
 |:-------|-------:|------:|---------:|----------:|------------:|----------:|-----------:|-----------:|--------:|
 | meta_d |  1.384 | 0.254 |    0.909 |      1.86 |       0.004 |     0.003 |       3270 |       2980 |       1 |
 
+## Group level / within-subject conditions
+
+```python
+model, trace = hmetad(
+  data=simulation,
+  nRatings=4,
+  stimuli="Stimuli",
+  accuracy="Accuracy",
+  confidence="Confidence",
+  subject="Subject",
+)
+```
+
+```python
+model, trace = hmetad(
+  data=simulation,
+  nRatings=4,
+  stimuli="Stimuli",
+  accuracy="Accuracy",
+  confidence="Confidence",
+  subject="Subject",
+  within="Condition",
+)
+```
+
 # References
 
 [1] Maniscalco, B., & Lau, H. (2014). Signal Detection Theory Analysis of Type 1 and Type 2 Data: Meta-d′, Response-Specific Meta-d′, and the Unequal Variance SDT Model. In The Cognitive Neuroscience of Metacognition (pp. 25–66). Springer Berlin Heidelberg. https://doi.org/10.1007/978-3-642-45190-4_3 

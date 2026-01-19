@@ -270,28 +270,62 @@ def hmetad(
             num_chains=num_chains,
             num_samples=num_samples,
         )
+        supports_dataframe_output = True
 
     #############
     # Group level
     elif (within is None) & (between is None) & (subject is not None):
 
-        # pymcData = preprocess_group(
-        #     data, subject, stimuli, accuracy, confidence, nRatings
-        # )
-
-        raise ValueError(
-            "Invalid backend provided - This model is not implemented yet."
+        pymcData = preprocess_hmetad_group(
+            data=data,
+            nR_S1=nR_S1,
+            nR_S2=nR_S2,
+            subject=subject,
+            stimuli=stimuli,
+            accuracy=accuracy,
+            confidence=confidence,
+            nRatings=nRatings,
+            nbins=nbins,
+            padding=padding,
+            padAmount=padAmount,
         )
+
+        from group_level_pymc import hmetad_groupLevel
+
+        model_output = hmetad_groupLevel(
+            pymcData,
+            sample_model=sample_model,
+            num_chains=num_chains,
+            num_samples=num_samples,
+        )
+        supports_dataframe_output = False
 
     ###################
     # Repeated-measures
     elif (within is not None) & (between is None) & (subject is not None):
 
-        # pymcData = preprocess_rm1way(
-        #     data, subject, within, stimuli, accuracy, confidence, nRatings
-        # )
+        pymcData = preprocess_rm1way(
+            data=data,
+            subject=subject,
+            within=within,
+            stimuli=stimuli,
+            accuracy=accuracy,
+            confidence=confidence,
+            nRatings=nRatings,
+            nbins=nbins,
+            padding=padding,
+            padAmount=padAmount,
+        )
 
-        raise ValueError("Invalid backend provided - This model is not implemented yet")
+        from group_level_pymc import hmetad_rm1way
+
+        model_output = hmetad_rm1way(
+            pymcData,
+            sample_model=sample_model,
+            num_chains=num_chains,
+            num_samples=num_samples,
+        )
+        supports_dataframe_output = False
 
     ##########
     # Sampling
@@ -301,6 +335,8 @@ def hmetad(
         if output == "model":
             return model, traces
         elif output == "dataframe":
+            if supports_dataframe_output is False:
+                raise ValueError("output='dataframe' is only supported for subject-level.")
             return pd.DataFrame(
                 {
                     "d": [pymcData["d1"]],
@@ -749,6 +785,205 @@ def preprocess_group(
     }
 
     return pymc_data, X
+
+
+def preprocess_hmetad_group(
+    data: Optional[pd.DataFrame],
+    nR_S1: Optional[Union[List, np.ndarray]] = None,
+    nR_S2: Optional[Union[List, np.ndarray]] = None,
+    subject: Optional[str] = None,
+    stimuli: str = "Stimuli",
+    accuracy: str = "Accuracy",
+    confidence: str = "Confidence",
+    nRatings: Optional[int] = None,
+    nbins: int = 4,
+    padding: bool = False,
+    padAmount: Optional[float] = None,
+) -> Dict:
+    """Preprocess group data for hierarchical Bayesian meta-d'."""
+
+    if data is None:
+        nR_S1, nR_S2, nRatings = _coerce_group_counts(nR_S1, nR_S2, nRatings)
+        subjects = np.arange(nR_S1.shape[0])
+    else:
+        if subject is None:
+            raise ValueError("You should provide the subject column name.")
+        if nRatings is None:
+            raise ValueError("You should provide the number of ratings.")
+        nRatings = _validate_nratings(nRatings)
+
+        if data[confidence].nunique() > nRatings:
+            print(
+                (
+                    "The confidence columns contains more unique values than nRatings. "
+                    "The ratings are going to be discretized using "
+                    "metadpy.utils.discreteRatings()"
+                )
+            )
+            new_ratings, _ = discreteRatings(data[confidence].to_numpy(), nbins=nbins)
+            data = data.copy()
+            data.loc[:, confidence] = new_ratings
+
+        subjects = pd.unique(data[subject])
+        nR_S1_list = []
+        nR_S2_list = []
+        for sub in subjects:
+            nR_S1_sub, nR_S2_sub = trials2counts(
+                data=data[data[subject] == sub],
+                stimuli=stimuli,
+                accuracy=accuracy,
+                confidence=confidence,
+                nRatings=nRatings,
+                padding=padding,
+                padAmount=padAmount,
+            )
+            nR_S1_list.append(nR_S1_sub)
+            nR_S2_list.append(nR_S2_sub)
+        nR_S1 = np.asarray(nR_S1_list)
+        nR_S2 = np.asarray(nR_S2_list)
+
+    n_subj = nR_S1.shape[0]
+    d1 = np.zeros(n_subj, dtype=float)
+    c1 = np.zeros(n_subj, dtype=float)
+    counts = np.zeros((n_subj, 4 * nRatings), dtype=float)
+    H = np.zeros(n_subj, dtype=float)
+    FA = np.zeros(n_subj, dtype=float)
+    S = np.zeros(n_subj, dtype=float)
+    N = np.zeros(n_subj, dtype=float)
+
+    for idx in range(n_subj):
+        this_data = extractParameters(nR_S1[idx], nR_S2[idx])
+        d1[idx] = this_data["d1"]
+        c1[idx] = this_data["c1"]
+        counts[idx] = this_data["counts"]
+        H[idx] = this_data["H"]
+        FA[idx] = this_data["FA"]
+        S[idx] = this_data["S"]
+        N[idx] = this_data["N"]
+
+    CR_counts = counts[:, :nRatings]
+    FA_counts = counts[:, nRatings : 2 * nRatings]
+    M_counts = counts[:, 2 * nRatings : 3 * nRatings]
+    H_counts = counts[:, 3 * nRatings : 4 * nRatings]
+    CR = CR_counts.sum(axis=1)
+    M = M_counts.sum(axis=1)
+
+    pymc_data = {
+        "d1": d1,
+        "c1": c1,
+        "counts": counts,
+        "CR_counts": CR_counts,
+        "FA_counts": FA_counts,
+        "M_counts": M_counts,
+        "H_counts": H_counts,
+        "CR": CR,
+        "FA": FA,
+        "M": M,
+        "H": H,
+        "S": S,
+        "N": N,
+        "nRatings": nRatings,
+        "nSubj": n_subj,
+        "Tol": 1e-05,
+        "subjects": subjects,
+    }
+
+    return pymc_data
+
+
+def preprocess_rm1way(
+    data: pd.DataFrame,
+    subject: str,
+    within: str,
+    stimuli: str = "Stimuli",
+    accuracy: str = "Accuracy",
+    confidence: str = "Confidence",
+    nRatings: Optional[int] = None,
+    nbins: int = 4,
+    padding: bool = False,
+    padAmount: Optional[float] = None,
+) -> Dict:
+    """Preprocess repeated measures data."""
+    if nRatings is None:
+        raise ValueError("You should provide the number of ratings.")
+    nRatings = _validate_nratings(nRatings)
+
+    if data[confidence].nunique() > nRatings:
+        print(
+            (
+                "The confidence columns contains more unique values than nRatings. "
+                "The ratings are going to be discretized using "
+                "metadpy.utils.discreteRatings()"
+            )
+        )
+        new_ratings, _ = discreteRatings(data[confidence].to_numpy(), nbins=nbins)
+        data = data.copy()
+        data.loc[:, confidence] = new_ratings
+
+    subjects = pd.unique(data[subject])
+    conditions = pd.unique(data[within])
+    n_subj = len(subjects)
+    n_cond = len(conditions)
+
+    counts = np.zeros((n_subj, n_cond, 4 * nRatings), dtype=float)
+    d1 = np.zeros((n_subj, n_cond), dtype=float)
+    c1 = np.zeros((n_subj, n_cond), dtype=float)
+    H = np.zeros((n_subj, n_cond), dtype=float)
+    FA = np.zeros((n_subj, n_cond), dtype=float)
+    S = np.zeros((n_subj, n_cond), dtype=float)
+    N = np.zeros((n_subj, n_cond), dtype=float)
+
+    for sub_idx, sub in enumerate(subjects):
+        for cond_idx, cond in enumerate(conditions):
+            subset = data[(data[subject] == sub) & (data[within] == cond)]
+            nR_S1_sub, nR_S2_sub = trials2counts(
+                data=subset,
+                stimuli=stimuli,
+                accuracy=accuracy,
+                confidence=confidence,
+                nRatings=nRatings,
+                padding=padding,
+                padAmount=padAmount,
+            )
+            this_data = extractParameters(nR_S1_sub, nR_S2_sub)
+            d1[sub_idx, cond_idx] = this_data["d1"]
+            c1[sub_idx, cond_idx] = this_data["c1"]
+            counts[sub_idx, cond_idx, :] = this_data["counts"]
+            H[sub_idx, cond_idx] = this_data["H"]
+            FA[sub_idx, cond_idx] = this_data["FA"]
+            S[sub_idx, cond_idx] = this_data["S"]
+            N[sub_idx, cond_idx] = this_data["N"]
+
+    CR_counts = counts[:, :, :nRatings]
+    FA_counts = counts[:, :, nRatings : 2 * nRatings]
+    M_counts = counts[:, :, 2 * nRatings : 3 * nRatings]
+    H_counts = counts[:, :, 3 * nRatings : 4 * nRatings]
+    CR = CR_counts.sum(axis=2)
+    M = M_counts.sum(axis=2)
+
+    pymc_data = {
+        "d1": d1,
+        "c1": c1,
+        "counts": counts,
+        "CR_counts": CR_counts,
+        "FA_counts": FA_counts,
+        "M_counts": M_counts,
+        "H_counts": H_counts,
+        "CR": CR,
+        "FA": FA,
+        "M": M,
+        "H": H,
+        "S": S,
+        "N": N,
+        "nRatings": nRatings,
+        "nSubj": n_subj,
+        "nCond": n_cond,
+        "Tol": 1e-05,
+        "subjects": subjects,
+        "conditions": conditions,
+    }
+
+    return pymc_data
 
 
 def _validate_nratings(nRatings: Optional[int]) -> int:
