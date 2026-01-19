@@ -656,7 +656,7 @@ def rhmetad(
         drop_na=drop_na,
     )
 
-    from group_level_regression_pymc import rhmetad_groupLevel
+    from metadpy.models.group_level_regression_pymc import rhmetad_groupLevel
 
     if compile_kwargs is not None:
         kwargs = {**kwargs, "compile_kwargs": compile_kwargs}
